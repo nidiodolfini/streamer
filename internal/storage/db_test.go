@@ -126,3 +126,69 @@ func TestStorageProtocols(t *testing.T) {
 		t.Errorf("expected to find NATS, Kafka, and RabbitMQ profiles, foundNats=%v, foundKafka=%v, foundRMQ=%v", foundNats, foundKafka, foundRabbitMQ)
 	}
 }
+
+func TestStorageSSHFields(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "streamer_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	db, err := sql.Open("sqlite", filepath.Join(tempDir, "test.db"))
+	if err != nil {
+		t.Fatalf("failed to open sqlite db: %v", err)
+	}
+	defer db.Close()
+
+	s := &Storage{db: db}
+	if err := s.initSchema(); err != nil {
+		t.Fatalf("failed to init schema: %v", err)
+	}
+
+	prof := ConnectionProfile{
+		ID:               "kafka-ssh",
+		Protocol:         "kafka",
+		Name:             "Private Kafka via Bastion",
+		URL:              "kafka-0.internal:9092,kafka-1.internal:9092",
+		AuthType:         "scram512",
+		Username:         "alice",
+		Password:         "secret",
+		SSHEnabled:       true,
+		SSHHost:          "bastion.example.com",
+		SSHPort:          2222,
+		SSHUser:          "ec2-user",
+		SSHAuthMethod:    "key",
+		SSHPassword:      "",
+		SSHKeyFile:       `C:\Users\alice\.ssh\id_ed25519`,
+		SSHKeyPassphrase: "hunter2",
+	}
+	if err := s.SaveConnection(prof); err != nil {
+		t.Fatalf("failed to save SSH profile: %v", err)
+	}
+
+	got, err := s.GetConnection("kafka-ssh")
+	if err != nil {
+		t.Fatalf("failed to get SSH profile: %v", err)
+	}
+	if !got.SSHEnabled {
+		t.Error("expected SSHEnabled true")
+	}
+	if got.SSHHost != "bastion.example.com" {
+		t.Errorf("expected SSHHost 'bastion.example.com', got %q", got.SSHHost)
+	}
+	if got.SSHPort != 2222 {
+		t.Errorf("expected SSHPort 2222, got %d", got.SSHPort)
+	}
+	if got.SSHUser != "ec2-user" {
+		t.Errorf("expected SSHUser 'ec2-user', got %q", got.SSHUser)
+	}
+	if got.SSHAuthMethod != "key" {
+		t.Errorf("expected SSHAuthMethod 'key', got %q", got.SSHAuthMethod)
+	}
+	if got.SSHKeyFile != `C:\Users\alice\.ssh\id_ed25519` {
+		t.Errorf("mismatched SSHKeyFile: %q", got.SSHKeyFile)
+	}
+	if got.SSHKeyPassphrase != "hunter2" {
+		t.Errorf("mismatched SSHKeyPassphrase: %q", got.SSHKeyPassphrase)
+	}
+}

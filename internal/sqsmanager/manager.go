@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"streamer/internal/sshtunnel"
 	"streamer/internal/storage"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -24,6 +25,7 @@ type SqsManager struct {
 	mu         sync.RWMutex
 	client     *sqs.Client
 	profile    *storage.ConnectionProfile
+	tunnel     *sshtunnel.Tunnel
 	status     SQSClusterStatus
 	stopPingCh chan struct{}
 	pollCancel context.CancelFunc
@@ -58,7 +60,7 @@ func (m *SqsManager) GetProfile() *storage.ConnectionProfile {
 	return m.profile
 }
 
-func (m *SqsManager) buildClient(p *storage.ConnectionProfile) (*sqs.Client, string, error) {
+func (m *SqsManager) buildClient(p *storage.ConnectionProfile, tunnel *sshtunnel.Tunnel) (*sqs.Client, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -70,15 +72,21 @@ func (m *SqsManager) buildClient(p *storage.ConnectionProfile) (*sqs.Client, str
 	var configOptions []func(*config.LoadOptions) error
 	configOptions = append(configOptions, config.WithRegion(region))
 
-	// Configure HTTP client for TLS insecure if requested
-	if p.TLSInsecure {
+	// Configure HTTP client for TLS insecure / SSH bastion tunnel when requested
+	if p.TLSInsecure || (p.SSHEnabled && tunnel != nil) {
 		tr := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: p.TLSInsecure},
+		}
+		if p.SSHEnabled && tunnel != nil {
+			tr.DialContext = tunnel.Dial
 		}
 		configOptions = append(configOptions, config.WithHTTPClient(&http.Client{
 			Transport: tr,
 			Timeout:   30 * time.Second,
 		}))
+	}
+	if p.SSHEnabled && tunnel == nil {
+		return nil, "", fmt.Errorf("SSH bastion tunnel is not established")
 	}
 
 	authType := strings.ToLower(strings.TrimSpace(p.AuthType))
@@ -172,7 +180,17 @@ func (m *SqsManager) ResolveQueueURL(rawQueueURL string) string {
 
 // TestConnection verifies connectivity, validates credentials/region, and measures RTT latency
 func (m *SqsManager) TestConnection(p storage.ConnectionProfile) (*SQSClusterStatus, error) {
-	client, endpointDisplay, err := m.buildClient(&p)
+	var tunnel *sshtunnel.Tunnel
+	if p.SSHEnabled {
+		var err error
+		tunnel, err = sshtunnel.NewForProfile(&p)
+		if err != nil {
+			return nil, err
+		}
+		defer tunnel.Close()
+	}
+
+	client, endpointDisplay, err := m.buildClient(&p, tunnel)
 	if err != nil {
 		return nil, err
 	}
@@ -222,8 +240,34 @@ func (m *SqsManager) Connect(p storage.ConnectionProfile) (*SQSClusterStatus, er
 	m.mu.Unlock()
 	m.emitStatus()
 
-	client, endpointDisplay, err := m.buildClient(&p)
+	// Establish the SSH bastion tunnel first when requested
+	var tunnel *sshtunnel.Tunnel
+	if p.SSHEnabled {
+		var terr error
+		tunnel, terr = sshtunnel.NewForProfile(&p)
+		if terr != nil {
+			m.mu.Lock()
+			m.status = SQSClusterStatus{
+				Connected:        false,
+				Connecting:       false,
+				Protocol:         "sqs",
+				LastError:        terr.Error(),
+				CurrentProfileID: p.ID,
+			}
+			m.mu.Unlock()
+			m.emitStatus()
+			return nil, terr
+		}
+	}
+	closeTunnel := func() {
+		if tunnel != nil {
+			tunnel.Close()
+		}
+	}
+
+	client, endpointDisplay, err := m.buildClient(&p, tunnel)
 	if err != nil {
+		closeTunnel()
 		m.mu.Lock()
 		m.status = SQSClusterStatus{
 			Connected:        false,
@@ -245,6 +289,7 @@ func (m *SqsManager) Connect(p storage.ConnectionProfile) (*SQSClusterStatus, er
 		MaxResults: aws.Int32(50),
 	})
 	if err != nil {
+		closeTunnel()
 		m.mu.Lock()
 		m.status = SQSClusterStatus{
 			Connected:        false,
@@ -270,6 +315,7 @@ func (m *SqsManager) Connect(p storage.ConnectionProfile) (*SQSClusterStatus, er
 	m.mu.Lock()
 	m.client = client
 	m.profile = &p
+	m.tunnel = tunnel
 	m.stopPingCh = stopCh
 	m.status = SQSClusterStatus{
 		Connected:        true,
@@ -300,6 +346,10 @@ func (m *SqsManager) Disconnect() {
 		m.stopPingCh = nil
 	}
 	m.client = nil
+	if m.tunnel != nil {
+		m.tunnel.Close()
+		m.tunnel = nil
+	}
 	m.profile = nil
 	m.status = SQSClusterStatus{
 		Connected:  false,

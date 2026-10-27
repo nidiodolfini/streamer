@@ -2273,6 +2273,14 @@ export namespace storage {
 	    awsProfile?: string;
 	    managementUrl?: string;
 	    vhost?: string;
+	    sshEnabled: boolean;
+	    sshHost?: string;
+	    sshPort?: number;
+	    sshUser?: string;
+	    sshAuthMethod?: string;
+	    sshPassword?: string;
+	    sshKeyFile?: string;
+	    sshKeyPassphrase?: string;
 	    // Go type: time
 	    createdAt: any;
 	    // Go type: time
@@ -2306,6 +2314,14 @@ export namespace storage {
 	        this.awsProfile = source["awsProfile"];
 	        this.managementUrl = source["managementUrl"];
 	        this.vhost = source["vhost"];
+	        this.sshEnabled = source["sshEnabled"];
+	        this.sshHost = source["sshHost"];
+	        this.sshPort = source["sshPort"];
+	        this.sshUser = source["sshUser"];
+	        this.sshAuthMethod = source["sshAuthMethod"];
+	        this.sshPassword = source["sshPassword"];
+	        this.sshKeyFile = source["sshKeyFile"];
+	        this.sshKeyPassphrase = source["sshKeyPassphrase"];
 	        this.createdAt = this.convertValues(source["createdAt"], null);
 	        this.updatedAt = this.convertValues(source["updatedAt"], null);
 	        this.lastConnectedAt = this.convertValues(source["lastConnectedAt"], null);

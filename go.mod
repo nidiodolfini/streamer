@@ -14,6 +14,7 @@ require (
 	github.com/twmb/franz-go v1.21.6
 	github.com/twmb/franz-go/pkg/kadm v1.18.0
 	github.com/wailsapp/wails/v2 v2.15.0
+	golang.org/x/crypto v0.53.0
 	modernc.org/sqlite v1.58.0
 )
 
@@ -65,7 +66,6 @@ require (
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.39.0 // indirect

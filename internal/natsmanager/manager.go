@@ -5,11 +5,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"streamer/internal/sshtunnel"
 	"streamer/internal/storage"
 
 	"github.com/nats-io/nats.go"
@@ -67,6 +69,7 @@ type NatsManager struct {
 	mu            sync.RWMutex
 	nc            *nats.Conn
 	profile       *storage.ConnectionProfile
+	tunnel        *sshtunnel.Tunnel
 	status        ServerStatus
 	stopRTTCh     chan struct{}
 	subscriptions map[string]*nats.Subscription
@@ -82,11 +85,20 @@ func NewNatsManager() *NatsManager {
 	}
 }
 
+// tunnelDialer adapts the SSH bastion tunnel to the nats.CustomDialer interface.
+type tunnelDialer struct {
+	t *sshtunnel.Tunnel
+}
+
+func (d tunnelDialer) Dial(network, address string) (net.Conn, error) {
+	return d.t.Dial(context.Background(), network, address)
+}
+
 func (m *NatsManager) SetContext(ctx context.Context) {
 	m.ctx = ctx
 }
 
-func (m *NatsManager) buildOptions(p *storage.ConnectionProfile) ([]nats.Option, error) {
+func (m *NatsManager) buildOptions(p *storage.ConnectionProfile, tunnel *sshtunnel.Tunnel) ([]nats.Option, error) {
 	opts := []nats.Option{
 		nats.Name(p.ClientName),
 		nats.Timeout(5 * time.Second),
@@ -120,6 +132,13 @@ func (m *NatsManager) buildOptions(p *storage.ConnectionProfile) ([]nats.Option,
 			m.mu.Unlock()
 			m.emitStatus()
 		}),
+	}
+
+	if p.SSHEnabled {
+		if tunnel == nil {
+			return nil, fmt.Errorf("SSH bastion tunnel is not established")
+		}
+		opts = append(opts, nats.SetCustomDialer(tunnelDialer{t: tunnel}))
 	}
 
 	switch p.AuthType {
@@ -191,6 +210,18 @@ func (m *NatsManager) TestConnection(p storage.ConnectionProfile) (*ServerStatus
 	opts := []nats.Option{
 		nats.Name("Streamer-Ping-Test"),
 		nats.Timeout(4 * time.Second),
+	}
+
+	// SSH bastion tunnel for the test connection
+	var tunnel *sshtunnel.Tunnel
+	if p.SSHEnabled {
+		var err error
+		tunnel, err = sshtunnel.NewForProfile(&p)
+		if err != nil {
+			return nil, err
+		}
+		defer tunnel.Close()
+		opts = append(opts, nats.SetCustomDialer(tunnelDialer{t: tunnel}))
 	}
 
 	switch p.AuthType {
@@ -270,14 +301,32 @@ func (m *NatsManager) Connect(p storage.ConnectionProfile) (*ServerStatus, error
 	m.mu.Unlock()
 	m.emitStatus()
 
-	opts, err := m.buildOptions(&p)
+	// Establish the SSH bastion tunnel first when requested
+	var tunnel *sshtunnel.Tunnel
+	if p.SSHEnabled {
+		var terr error
+		tunnel, terr = sshtunnel.NewForProfile(&p)
+		if terr != nil {
+			m.setError(terr.Error())
+			return nil, terr
+		}
+	}
+	closeTunnel := func() {
+		if tunnel != nil {
+			tunnel.Close()
+		}
+	}
+
+	opts, err := m.buildOptions(&p, tunnel)
 	if err != nil {
+		closeTunnel()
 		m.setError(err.Error())
 		return nil, err
 	}
 
 	nc, err := nats.Connect(p.URL, opts...)
 	if err != nil {
+		closeTunnel()
 		m.setError(err.Error())
 		return nil, err
 	}
@@ -287,6 +336,7 @@ func (m *NatsManager) Connect(p storage.ConnectionProfile) (*ServerStatus, error
 
 	m.mu.Lock()
 	m.nc = nc
+	m.tunnel = tunnel
 	m.stopRTTCh = make(chan struct{})
 	m.status = ServerStatus{
 		Connected:        true,
@@ -328,6 +378,10 @@ func (m *NatsManager) Disconnect() {
 	if m.nc != nil {
 		m.nc.Close()
 		m.nc = nil
+	}
+	if m.tunnel != nil {
+		m.tunnel.Close()
+		m.tunnel = nil
 	}
 	m.status = ServerStatus{Connected: false, Protocol: "nats"}
 	m.profile = nil

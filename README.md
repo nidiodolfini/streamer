@@ -46,6 +46,7 @@ It also features a built-in, local **Model Context Protocol (MCP) Server**, enab
   - **NATS**: Anonymous, Username & Password, Token, NKey, and User Credentials (`.creds` file).
   - **Amazon SQS**: AWS Static Credentials (Access Key & Secret Key), Session Tokens, Regions, and custom LocalStack/ElasticMQ endpoint URLs.
   - **RabbitMQ**: AMQP / AMQPS URIs, Username & Password, custom Virtual Hosts (`/`, custom), TLS/SSL (CA & Client Certificates, Insecure Skip Verify), and auto-derived or explicit Management HTTP URLs.
+- **SSH Bastion / Jump Host Tunneling** (à la JetBrains DataGrip): route **every** connection through an SSH bastion host — supports **Password** and **Key Pair** (OpenSSH PEM / PKCS#8, encrypted keys with passphrase) authentication, automatic keepalive/reconnect, and transparent `direct-tcpip` forwarding. Works for all protocols: Kafka (including brokers discovered via cluster metadata), NATS, RabbitMQ (AMQP + Management HTTP), and SQS custom endpoints.
 - **Persistent Profiles**: Connection configurations are stored locally in an embedded, pure-Go SQLite database (`modernc.org/sqlite`).
 - **Live Diagnostics**: Real-time heartbeat, round-trip time (RTT latency in ms), active broker node count, and connection health status.
 
@@ -183,6 +184,7 @@ Streamer includes a built-in local MCP SSE Server (`http://127.0.0.1:<port>/sse`
 | **NATS Engine** | [`nats.go`](https://github.com/nats-io/nats.go) | Official high-performance pure-Go NATS and JetStream client |
 | **SQS Engine** | [`aws-sdk-go-v2`](https://github.com/aws/aws-sdk-go-v2) | Official pure-Go modular AWS SDK v2 for Amazon SQS |
 | **RabbitMQ Engine** | [`amqp091-go`](https://github.com/rabbitmq/amqp091-go) & [`rabbit-hole`](https://github.com/michaelklishin/rabbit-hole) | Official RabbitMQ Go AMQP client and Management HTTP client |
+| **SSH Bastion Tunnel** | [`golang.org/x/crypto/ssh`](https://pkg.go.dev/golang.org/x/crypto/ssh) | Pure-Go SSH client with `direct-tcpip` forwarding, keepalive & reconnect for jump-host connectivity |
 | **MCP Server** | [`mcp-go`](https://github.com/mark3labs/mcp-go) | Pure-Go Model Context Protocol SSE server |
 | **Local Database** | [`modernc.org/sqlite`](https://gitlab.com/cznic/sqlite) | CGO-free pure Go SQLite driver for cross-platform persistence |
 | **Frontend UI** | React 18, TypeScript, Tailwind CSS, Lucide Icons | Modern, responsive developer tool interface with dark mode styling |

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"streamer/internal/sshtunnel"
 	"streamer/internal/storage"
 
 	rabbithole "github.com/michaelklishin/rabbit-hole/v3"
@@ -28,6 +29,7 @@ type RabbitMQManager struct {
 	httpCli       *rabbithole.Client
 	httpClient    *http.Client
 	profile       *storage.ConnectionProfile
+	tunnel        *sshtunnel.Tunnel
 	status        RMQClusterStatus
 	stopPingCh    chan struct{}
 	streamMu      sync.Mutex
@@ -214,7 +216,7 @@ func (m *RabbitMQManager) parseConnectionInfo(p *storage.ConnectionProfile) (amq
 }
 
 // buildClients instantiates AMQP connection and RabbitMQ Management HTTP client
-func (m *RabbitMQManager) buildClients(p *storage.ConnectionProfile) (*amqp.Connection, *rabbithole.Client, *http.Client, string, string, string, error) {
+func (m *RabbitMQManager) buildClients(p *storage.ConnectionProfile, tunnel *sshtunnel.Tunnel) (*amqp.Connection, *rabbithole.Client, *http.Client, string, string, string, error) {
 	amqpURL, mgtURL, vhost, user, pass, isTLS, err := m.parseConnectionInfo(p)
 	if err != nil {
 		return nil, nil, nil, "", "", "", err
@@ -223,6 +225,10 @@ func (m *RabbitMQManager) buildClients(p *storage.ConnectionProfile) (*amqp.Conn
 	tlsCfg, err := m.buildTLSConfig(p)
 	if err != nil {
 		return nil, nil, nil, "", "", "", err
+	}
+
+	if p.SSHEnabled && tunnel == nil {
+		return nil, nil, nil, "", "", "", fmt.Errorf("SSH bastion tunnel is not established")
 	}
 
 	// AMQP Dial configuration
@@ -236,6 +242,9 @@ func (m *RabbitMQManager) buildClients(p *storage.ConnectionProfile) (*amqp.Conn
 			"platform":        "Desktop",
 		},
 		Dial: func(network, addr string) (net.Conn, error) {
+			if tunnel != nil {
+				return tunnel.Dial(context.Background(), network, addr)
+			}
 			return net.DialTimeout(network, addr, 8*time.Second)
 		},
 	}
@@ -254,6 +263,9 @@ func (m *RabbitMQManager) buildClients(p *storage.ConnectionProfile) (*amqp.Conn
 		TLSClientConfig:       tlsCfg,
 		ResponseHeaderTimeout: 8 * time.Second,
 	}
+	if tunnel != nil {
+		httpTransport.DialContext = tunnel.Dial
+	}
 	rawHTTPClient := &http.Client{
 		Transport: httpTransport,
 		Timeout:   10 * time.Second,
@@ -269,7 +281,17 @@ func (m *RabbitMQManager) buildClients(p *storage.ConnectionProfile) (*amqp.Conn
 
 // TestConnection verifies connectivity, checks management API, and measures RTT latency
 func (m *RabbitMQManager) TestConnection(p storage.ConnectionProfile) (*RMQClusterStatus, error) {
-	conn, mgtCli, _, amqpURL, mgtURL, vhost, err := m.buildClients(&p)
+	var tunnel *sshtunnel.Tunnel
+	if p.SSHEnabled {
+		var err error
+		tunnel, err = sshtunnel.NewForProfile(&p)
+		if err != nil {
+			return nil, err
+		}
+		defer tunnel.Close()
+	}
+
+	conn, mgtCli, _, amqpURL, mgtURL, vhost, err := m.buildClients(&p, tunnel)
 	if err != nil {
 		return nil, err
 	}
@@ -336,8 +358,34 @@ func (m *RabbitMQManager) Connect(p storage.ConnectionProfile) (*RMQClusterStatu
 	m.mu.Unlock()
 	m.emitStatus()
 
-	conn, mgtCli, rawHTTP, amqpURL, mgtURL, vhost, err := m.buildClients(&p)
+	// Establish the SSH bastion tunnel first when requested
+	var tunnel *sshtunnel.Tunnel
+	if p.SSHEnabled {
+		var terr error
+		tunnel, terr = sshtunnel.NewForProfile(&p)
+		if terr != nil {
+			m.mu.Lock()
+			m.status = RMQClusterStatus{
+				Connected:        false,
+				Connecting:       false,
+				Protocol:         "rabbitmq",
+				LastError:        terr.Error(),
+				CurrentProfileID: p.ID,
+			}
+			m.mu.Unlock()
+			m.emitStatus()
+			return nil, terr
+		}
+	}
+	closeTunnel := func() {
+		if tunnel != nil {
+			tunnel.Close()
+		}
+	}
+
+	conn, mgtCli, rawHTTP, amqpURL, mgtURL, vhost, err := m.buildClients(&p, tunnel)
 	if err != nil {
+		closeTunnel()
 		m.mu.Lock()
 		m.status = RMQClusterStatus{
 			Connected:        false,
@@ -355,6 +403,7 @@ func (m *RabbitMQManager) Connect(p storage.ConnectionProfile) (*RMQClusterStatu
 	probeCh, err := conn.Channel()
 	if err != nil {
 		_ = conn.Close()
+		closeTunnel()
 		m.mu.Lock()
 		m.status = RMQClusterStatus{
 			Connected:        false,
@@ -377,6 +426,7 @@ func (m *RabbitMQManager) Connect(p storage.ConnectionProfile) (*RMQClusterStatu
 	m.httpCli = mgtCli
 	m.httpClient = rawHTTP
 	m.profile = &p
+	m.tunnel = tunnel
 	m.activeVHost = vhost
 	m.managementURL = mgtURL
 	m.stopPingCh = stopCh
@@ -437,6 +487,10 @@ func (m *RabbitMQManager) Disconnect() {
 	}
 	m.httpCli = nil
 	m.httpClient = nil
+	if m.tunnel != nil {
+		m.tunnel.Close()
+		m.tunnel = nil
+	}
 	m.profile = nil
 	m.status = RMQClusterStatus{
 		Connected:  false,

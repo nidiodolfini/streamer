@@ -31,6 +31,14 @@ type ConnectionProfile struct {
 	AWSProfile      string     `json:"awsProfile,omitempty"`
 	ManagementURL   string     `json:"managementUrl,omitempty"`
 	VHost           string     `json:"vhost,omitempty"`
+	SSHEnabled      bool       `json:"sshEnabled"`
+	SSHHost         string     `json:"sshHost,omitempty"`
+	SSHPort         int        `json:"sshPort,omitempty"`
+	SSHUser         string     `json:"sshUser,omitempty"`
+	SSHAuthMethod   string     `json:"sshAuthMethod,omitempty"` // "password" or "key"
+	SSHPassword     string     `json:"sshPassword,omitempty"`
+	SSHKeyFile      string     `json:"sshKeyFile,omitempty"`
+	SSHKeyPassphrase string    `json:"sshKeyPassphrase,omitempty"`
 	CreatedAt       time.Time  `json:"createdAt"`
 	UpdatedAt       time.Time  `json:"updatedAt"`
 	LastConnectedAt *time.Time `json:"lastConnectedAt,omitempty"`
@@ -96,6 +104,14 @@ func (s *Storage) initSchema() error {
 		aws_profile TEXT,
 		management_url TEXT,
 		vhost TEXT,
+		ssh_enabled INTEGER DEFAULT 0,
+		ssh_host TEXT,
+		ssh_port INTEGER DEFAULT 22,
+		ssh_user TEXT,
+		ssh_auth_method TEXT,
+		ssh_password TEXT,
+		ssh_key_file TEXT,
+		ssh_key_passphrase TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		last_connected_at DATETIME
@@ -117,6 +133,14 @@ func (s *Storage) initSchema() error {
 	_, _ = s.db.Exec("ALTER TABLE connections ADD COLUMN aws_profile TEXT;")
 	_, _ = s.db.Exec("ALTER TABLE connections ADD COLUMN management_url TEXT;")
 	_, _ = s.db.Exec("ALTER TABLE connections ADD COLUMN vhost TEXT;")
+	_, _ = s.db.Exec("ALTER TABLE connections ADD COLUMN ssh_enabled INTEGER DEFAULT 0;")
+	_, _ = s.db.Exec("ALTER TABLE connections ADD COLUMN ssh_host TEXT;")
+	_, _ = s.db.Exec("ALTER TABLE connections ADD COLUMN ssh_port INTEGER DEFAULT 22;")
+	_, _ = s.db.Exec("ALTER TABLE connections ADD COLUMN ssh_user TEXT;")
+	_, _ = s.db.Exec("ALTER TABLE connections ADD COLUMN ssh_auth_method TEXT;")
+	_, _ = s.db.Exec("ALTER TABLE connections ADD COLUMN ssh_password TEXT;")
+	_, _ = s.db.Exec("ALTER TABLE connections ADD COLUMN ssh_key_file TEXT;")
+	_, _ = s.db.Exec("ALTER TABLE connections ADD COLUMN ssh_key_passphrase TEXT;")
 
 	return nil
 }
@@ -142,6 +166,9 @@ func (s *Storage) GetAllConnections() ([]ConnectionProfile, error) {
 		       tls_insecure, COALESCE(tls_sni, ''), client_name,
 		       COALESCE(aws_region, ''), COALESCE(aws_profile, ''),
 		       COALESCE(management_url, ''), COALESCE(vhost, ''),
+		       COALESCE(ssh_enabled, 0), COALESCE(ssh_host, ''), COALESCE(ssh_port, 22),
+		       COALESCE(ssh_user, ''), COALESCE(ssh_auth_method, ''),
+		       COALESCE(ssh_password, ''), COALESCE(ssh_key_file, ''), COALESCE(ssh_key_passphrase, ''),
 		       created_at, updated_at, last_connected_at
 		FROM connections
 		ORDER BY updated_at DESC
@@ -154,9 +181,10 @@ func (s *Storage) GetAllConnections() ([]ConnectionProfile, error) {
 	var list []ConnectionProfile
 	for rows.Next() {
 		var p ConnectionProfile
-		var insecure int
+		var insecure, sshEnabled int
 		var username, password, token, nkeySeed, credsFile sql.NullString
 		var tlsCA, tlsCert, tlsKey sql.NullString
+		var sshHost, sshUser, sshAuthMethod, sshPassword, sshKeyFile, sshKeyPassphrase sql.NullString
 		var lastConnected sql.NullTime
 
 		err := rows.Scan(
@@ -166,6 +194,9 @@ func (s *Storage) GetAllConnections() ([]ConnectionProfile, error) {
 			&insecure, &p.TLSSNI, &p.ClientName,
 			&p.AWSRegion, &p.AWSProfile,
 			&p.ManagementURL, &p.VHost,
+			&sshEnabled, &sshHost, &p.SSHPort,
+			&sshUser, &sshAuthMethod,
+			&sshPassword, &sshKeyFile, &sshKeyPassphrase,
 			&p.CreatedAt, &p.UpdatedAt, &lastConnected,
 		)
 		if err != nil {
@@ -184,6 +215,13 @@ func (s *Storage) GetAllConnections() ([]ConnectionProfile, error) {
 		p.TLSCertFile = tlsCert.String
 		p.TLSKeyFile = tlsKey.String
 		p.TLSInsecure = insecure == 1
+		p.SSHEnabled = sshEnabled == 1
+		p.SSHHost = sshHost.String
+		p.SSHUser = sshUser.String
+		p.SSHAuthMethod = sshAuthMethod.String
+		p.SSHPassword = sshPassword.String
+		p.SSHKeyFile = sshKeyFile.String
+		p.SSHKeyPassphrase = sshKeyPassphrase.String
 		if lastConnected.Valid {
 			p.LastConnectedAt = &lastConnected.Time
 		}
@@ -201,15 +239,19 @@ func (s *Storage) GetConnection(id string) (*ConnectionProfile, error) {
 		       tls_insecure, COALESCE(tls_sni, ''), client_name,
 		       COALESCE(aws_region, ''), COALESCE(aws_profile, ''),
 		       COALESCE(management_url, ''), COALESCE(vhost, ''),
+		       COALESCE(ssh_enabled, 0), COALESCE(ssh_host, ''), COALESCE(ssh_port, 22),
+		       COALESCE(ssh_user, ''), COALESCE(ssh_auth_method, ''),
+		       COALESCE(ssh_password, ''), COALESCE(ssh_key_file, ''), COALESCE(ssh_key_passphrase, ''),
 		       created_at, updated_at, last_connected_at
 		FROM connections
 		WHERE id = ?
 	`, id)
 
 	var p ConnectionProfile
-	var insecure int
+	var insecure, sshEnabled int
 	var username, password, token, nkeySeed, credsFile sql.NullString
 	var tlsCA, tlsCert, tlsKey sql.NullString
+	var sshHost, sshUser, sshAuthMethod, sshPassword, sshKeyFile, sshKeyPassphrase sql.NullString
 	var lastConnected sql.NullTime
 
 	err := row.Scan(
@@ -219,6 +261,9 @@ func (s *Storage) GetConnection(id string) (*ConnectionProfile, error) {
 		&insecure, &p.TLSSNI, &p.ClientName,
 		&p.AWSRegion, &p.AWSProfile,
 		&p.ManagementURL, &p.VHost,
+		&sshEnabled, &sshHost, &p.SSHPort,
+		&sshUser, &sshAuthMethod,
+		&sshPassword, &sshKeyFile, &sshKeyPassphrase,
 		&p.CreatedAt, &p.UpdatedAt, &lastConnected,
 	)
 	if err != nil {
@@ -237,6 +282,13 @@ func (s *Storage) GetConnection(id string) (*ConnectionProfile, error) {
 	p.TLSCertFile = tlsCert.String
 	p.TLSKeyFile = tlsKey.String
 	p.TLSInsecure = insecure == 1
+	p.SSHEnabled = sshEnabled == 1
+	p.SSHHost = sshHost.String
+	p.SSHUser = sshUser.String
+	p.SSHAuthMethod = sshAuthMethod.String
+	p.SSHPassword = sshPassword.String
+	p.SSHKeyFile = sshKeyFile.String
+	p.SSHKeyPassphrase = sshKeyPassphrase.String
 	if lastConnected.Valid {
 		p.LastConnectedAt = &lastConnected.Time
 	}
@@ -252,13 +304,23 @@ func (s *Storage) SaveConnection(p ConnectionProfile) error {
 	if p.TLSInsecure {
 		insecure = 1
 	}
+	sshEnabled := 0
+	if p.SSHEnabled {
+		sshEnabled = 1
+	}
+	sshPort := p.SSHPort
+	if sshPort <= 0 {
+		sshPort = 22
+	}
 
 	query := `
 	INSERT INTO connections (
 		id, protocol, name, url, auth_type, username, password, token, nkey_seed,
 		creds_file_path, tls_ca_file, tls_cert_file, tls_key_file,
-		tls_insecure, tls_sni, client_name, aws_region, aws_profile, management_url, vhost, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		tls_insecure, tls_sni, client_name, aws_region, aws_profile, management_url, vhost,
+		ssh_enabled, ssh_host, ssh_port, ssh_user, ssh_auth_method, ssh_password, ssh_key_file, ssh_key_passphrase,
+		created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		protocol = excluded.protocol,
 		name = excluded.name,
@@ -279,6 +341,14 @@ func (s *Storage) SaveConnection(p ConnectionProfile) error {
 		aws_profile = excluded.aws_profile,
 		management_url = excluded.management_url,
 		vhost = excluded.vhost,
+		ssh_enabled = excluded.ssh_enabled,
+		ssh_host = excluded.ssh_host,
+		ssh_port = excluded.ssh_port,
+		ssh_user = excluded.ssh_user,
+		ssh_auth_method = excluded.ssh_auth_method,
+		ssh_password = excluded.ssh_password,
+		ssh_key_file = excluded.ssh_key_file,
+		ssh_key_passphrase = excluded.ssh_key_passphrase,
 		updated_at = excluded.updated_at
 	`
 	now := time.Now().UTC()
@@ -292,7 +362,10 @@ func (s *Storage) SaveConnection(p ConnectionProfile) error {
 		p.Username, p.Password, p.Token, p.NKeySeed,
 		p.CredsFilePath, p.TLSCAFile, p.TLSCertFile, p.TLSKeyFile,
 		insecure, p.TLSSNI, p.ClientName, p.AWSRegion, p.AWSProfile,
-		p.ManagementURL, p.VHost, p.CreatedAt, p.UpdatedAt,
+		p.ManagementURL, p.VHost,
+		sshEnabled, p.SSHHost, sshPort, p.SSHUser, p.SSHAuthMethod,
+		p.SSHPassword, p.SSHKeyFile, p.SSHKeyPassphrase,
+		p.CreatedAt, p.UpdatedAt,
 	)
 	return err
 }

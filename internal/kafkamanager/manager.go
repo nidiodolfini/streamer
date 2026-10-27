@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"streamer/internal/sshtunnel"
 	"streamer/internal/storage"
 
 	"github.com/twmb/franz-go/pkg/kadm"
@@ -26,6 +27,7 @@ type KafkaManager struct {
 	client     *kgo.Client
 	admin      *kadm.Client
 	profile    *storage.ConnectionProfile
+	tunnel     *sshtunnel.Tunnel
 	status     KafkaClusterStatus
 	stopPingCh chan struct{}
 	tailMu     sync.Mutex
@@ -59,13 +61,14 @@ func (m *KafkaManager) getAdminClient() (*kadm.Client, error) {
 func (m *KafkaManager) getConsumerClient(extraOpts ...kgo.Opt) (*kgo.Client, error) {
 	m.mu.RLock()
 	p := m.profile
+	t := m.tunnel
 	m.mu.RUnlock()
 
 	if p == nil {
 		return nil, fmt.Errorf("not connected to a Kafka cluster")
 	}
 
-	opts, err := m.buildClientOptions(p)
+	opts, err := m.buildClientOptions(p, t)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +92,7 @@ func parseBrokers(urlStr string) []string {
 	return brokers
 }
 
-func (m *KafkaManager) buildClientOptions(p *storage.ConnectionProfile) ([]kgo.Opt, error) {
+func (m *KafkaManager) buildClientOptions(p *storage.ConnectionProfile, tunnel *sshtunnel.Tunnel) ([]kgo.Opt, error) {
 	brokers := parseBrokers(p.URL)
 	if len(brokers) == 0 {
 		return nil, fmt.Errorf("no valid broker addresses provided in URL: %q", p.URL)
@@ -98,6 +101,15 @@ func (m *KafkaManager) buildClientOptions(p *storage.ConnectionProfile) ([]kgo.O
 	opts := []kgo.Opt{
 		kgo.SeedBrokers(brokers...),
 		kgo.RequestTimeoutOverhead(10 * time.Second),
+	}
+
+	if p.SSHEnabled {
+		if tunnel == nil {
+			return nil, fmt.Errorf("SSH bastion tunnel is not established")
+		}
+		// Route every broker connection (including brokers discovered via
+		// cluster metadata) through the SSH bastion.
+		opts = append(opts, kgo.Dialer(tunnel.Dial))
 	}
 
 	if p.ClientName != "" {
@@ -169,7 +181,17 @@ func (m *KafkaManager) emitStatus() {
 
 // TestConnection verifies connectivity, broker reachability, and cluster metadata
 func (m *KafkaManager) TestConnection(p storage.ConnectionProfile) (*KafkaClusterStatus, error) {
-	opts, err := m.buildClientOptions(&p)
+	var tunnel *sshtunnel.Tunnel
+	if p.SSHEnabled {
+		var err error
+		tunnel, err = sshtunnel.NewForProfile(&p)
+		if err != nil {
+			return nil, err
+		}
+		defer tunnel.Close()
+	}
+
+	opts, err := m.buildClientOptions(&p, tunnel)
 	if err != nil {
 		return nil, err
 	}
@@ -247,8 +269,33 @@ func (m *KafkaManager) Connect(p storage.ConnectionProfile) (*KafkaClusterStatus
 	m.mu.Unlock()
 	m.emitStatus()
 
-	opts, err := m.buildClientOptions(&p)
+	// Establish the SSH bastion tunnel first when requested
+	var tunnel *sshtunnel.Tunnel
+	if p.SSHEnabled {
+		var err error
+		tunnel, err = sshtunnel.NewForProfile(&p)
+		if err != nil {
+			m.mu.Lock()
+			m.status = KafkaClusterStatus{
+				Connected:        false,
+				Protocol:         "kafka",
+				LastError:        err.Error(),
+				CurrentProfileID: p.ID,
+			}
+			m.mu.Unlock()
+			m.emitStatus()
+			return nil, err
+		}
+	}
+	closeTunnel := func() {
+		if tunnel != nil {
+			tunnel.Close()
+		}
+	}
+
+	opts, err := m.buildClientOptions(&p, tunnel)
 	if err != nil {
+		closeTunnel()
 		m.mu.Lock()
 		m.status = KafkaClusterStatus{
 			Connected:        false,
@@ -263,6 +310,7 @@ func (m *KafkaManager) Connect(p storage.ConnectionProfile) (*KafkaClusterStatus
 
 	client, err := kgo.NewClient(opts...)
 	if err != nil {
+		closeTunnel()
 		m.mu.Lock()
 		m.status = KafkaClusterStatus{
 			Connected:        false,
@@ -281,6 +329,7 @@ func (m *KafkaManager) Connect(p storage.ConnectionProfile) (*KafkaClusterStatus
 	start := time.Now()
 	if err := client.Ping(ctx); err != nil {
 		client.Close()
+		closeTunnel()
 		errMsg := fmt.Sprintf("failed to connect to Kafka brokers: %v", err)
 		m.mu.Lock()
 		m.status = KafkaClusterStatus{
@@ -299,6 +348,7 @@ func (m *KafkaManager) Connect(p storage.ConnectionProfile) (*KafkaClusterStatus
 	meta, err := admin.Metadata(ctx)
 	if err != nil {
 		client.Close()
+		closeTunnel()
 		errMsg := fmt.Sprintf("failed to retrieve cluster metadata: %v", err)
 		m.mu.Lock()
 		m.status = KafkaClusterStatus{
@@ -342,6 +392,7 @@ func (m *KafkaManager) Connect(p storage.ConnectionProfile) (*KafkaClusterStatus
 	m.client = client
 	m.admin = admin
 	m.profile = &profileCopy
+	m.tunnel = tunnel
 	m.stopPingCh = stopCh
 	m.status = KafkaClusterStatus{
 		Connected:        true,
@@ -415,6 +466,10 @@ func (m *KafkaManager) Disconnect() {
 		m.client.Close()
 		m.client = nil
 		m.admin = nil
+	}
+	if m.tunnel != nil {
+		m.tunnel.Close()
+		m.tunnel = nil
 	}
 	m.profile = nil
 	m.status = KafkaClusterStatus{

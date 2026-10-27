@@ -65,7 +65,7 @@ func TestBuildClientDummyAuth(t *testing.T) {
 		AWSRegion: "us-east-1",
 	}
 
-	client, display, err := mgr.buildClient(p)
+	client, display, err := mgr.buildClient(p, nil)
 	if err != nil {
 		t.Fatalf("expected buildClient to succeed for dummy auth: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestBuildClientStaticAuthValidation(t *testing.T) {
 		AWSRegion: "us-east-1",
 	}
 
-	_, _, err := mgr.buildClient(p)
+	_, _, err := mgr.buildClient(p, nil)
 	if err == nil {
 		t.Errorf("expected error when static credentials are empty")
 	}
@@ -96,7 +96,7 @@ func TestBuildClientStaticAuthValidation(t *testing.T) {
 	// With credentials
 	p.Username = "AKIAEXAMPLE"
 	p.Password = "SECRETKEYEXAMPLE"
-	client, display, err := mgr.buildClient(p)
+	client, display, err := mgr.buildClient(p, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

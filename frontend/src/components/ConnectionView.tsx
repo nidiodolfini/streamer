@@ -44,7 +44,7 @@ export const ConnectionView: React.FC<ConnectionViewProps> = ({
   onTest,
 }) => {
   const [form, setForm] = useState<storage.ConnectionProfile>(profile);
-  const [activeTab, setActiveTab] = useState<'general' | 'auth' | 'tls'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'auth' | 'tls' | 'ssh'>('general');
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -406,6 +406,16 @@ export const ConnectionView: React.FC<ConnectionViewProps> = ({
             }`}
           >
             TLS / Security
+          </button>
+          <button
+            onClick={() => setActiveTab('ssh')}
+            className={`pb-2 text-xs font-medium border-b-2 transition-all ${
+              activeTab === 'ssh'
+                ? 'border-blue-500 text-white'
+                : 'border-transparent text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            SSH / Bastion {form.sshEnabled ? '✓' : ''}
           </button>
         </div>
 
@@ -1164,6 +1174,155 @@ export const ConnectionView: React.FC<ConnectionViewProps> = ({
                   </div>
                 </div>
               </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 4: SSH / Bastion Tunnel */}
+        {activeTab === 'ssh' && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-[#111722] border border-[#1e2736]">
+              <input
+                type="checkbox"
+                id="sshEnabled"
+                checked={form.sshEnabled || false}
+                onChange={(e) => {
+                  updateField('sshEnabled', e.target.checked);
+                  if (e.target.checked) {
+                    if (!form.sshPort) updateField('sshPort', 22);
+                    if (!form.sshAuthMethod) updateField('sshAuthMethod', 'key');
+                  }
+                }}
+                className="w-4 h-4 rounded bg-[#131923] border-[#232c3d] text-blue-600 focus:ring-0"
+              />
+              <label htmlFor="sshEnabled" className="text-xs text-gray-300 cursor-pointer">
+                <span className="font-semibold text-white">Use SSH Tunnel / Bastion Host</span>
+                <p className="text-[11px] text-gray-500 mt-0.5">
+                  Route all traffic to {isKafka ? 'Kafka brokers' : isSQS ? 'the SQS endpoint' : isRabbitMQ ? 'the RabbitMQ broker & Management API' : 'the NATS server(s)'} through an SSH jump host — like the SSH/SSL tab in JetBrains DataGrip.
+                </p>
+              </label>
+            </div>
+
+            {form.sshEnabled && (
+              <>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="space-y-1.5 col-span-2">
+                    <label className="text-xs font-medium text-gray-300">SSH Host</label>
+                    <input
+                      type="text"
+                      value={form.sshHost || ''}
+                      onChange={(e) => updateField('sshHost', e.target.value)}
+                      placeholder="bastion.example.com or 10.0.0.5"
+                      className="w-full bg-[#131923] border border-[#232c3d] focus:border-blue-500 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-gray-300">Port</label>
+                    <input
+                      type="number"
+                      value={form.sshPort || 22}
+                      onChange={(e) => updateField('sshPort', parseInt(e.target.value, 10) || 22)}
+                      placeholder="22"
+                      className="w-full bg-[#131923] border border-[#232c3d] focus:border-blue-500 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-gray-300">Username</label>
+                  <input
+                    type="text"
+                    value={form.sshUser || ''}
+                    onChange={(e) => updateField('sshUser', e.target.value)}
+                    placeholder="ec2-user / ubuntu / admin"
+                    className="w-full bg-[#131923] border border-[#232c3d] focus:border-blue-500 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-gray-300">Authentication Type</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { id: 'key', label: 'Key Pair (OpenSSH)' },
+                      { id: 'password', label: 'Password' },
+                    ].map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => updateField('sshAuthMethod', item.id)}
+                        className={`py-2 px-3 rounded-lg text-xs font-medium border transition-all ${
+                          (form.sshAuthMethod || 'key') === item.id
+                            ? 'bg-blue-600/20 border-blue-500 text-blue-400'
+                            : 'bg-[#131923] border-[#232c3d] text-gray-400 hover:text-gray-200'
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {(form.sshAuthMethod || 'key') === 'password' ? (
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-gray-300">Password</label>
+                    <input
+                      type="password"
+                      value={form.sshPassword || ''}
+                      onChange={(e) => updateField('sshPassword', e.target.value)}
+                      placeholder="Bastion password"
+                      className="w-full bg-[#131923] border border-[#232c3d] focus:border-blue-500 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors"
+                    />
+                    <p className="text-[11px] text-gray-500">
+                      Also works with servers that only offer keyboard-interactive authentication.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-gray-300">Private Key File</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={form.sshKeyFile || ''}
+                          onChange={(e) => updateField('sshKeyFile', e.target.value)}
+                          placeholder="C:\Users\you\.ssh\id_ed25519"
+                          className="flex-1 bg-[#131923] border border-[#232c3d] focus:border-blue-500 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors"
+                        />
+                        <button
+                          onClick={() => pickFile('sshKeyFile', 'Select SSH Private Key', 'SSH Private Keys (*.pem;*.key)', '*.pem;*.key')}
+                          className="px-3 py-2 bg-[#1a212d] hover:bg-[#232c3c] border border-[#2a3446] rounded-lg text-xs text-gray-300 hover:text-white flex items-center gap-1.5"
+                        >
+                          <FolderOpen className="w-3.5 h-3.5" />
+                          <span>Browse</span>
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-gray-500">
+                        OpenSSH formats (PEM / PKCS#8): ed25519, RSA, ECDSA. PuTTY <code className="text-blue-300">.ppk</code> keys: convert with PuTTYgen → Conversions → Export OpenSSH key.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-gray-300">
+                        Key Passphrase <span className="text-gray-500 font-normal">(leave empty for unencrypted keys)</span>
+                      </label>
+                      <input
+                        type="password"
+                        value={form.sshKeyPassphrase || ''}
+                        onChange={(e) => updateField('sshKeyPassphrase', e.target.value)}
+                        placeholder="Optional passphrase"
+                        className="w-full bg-[#131923] border border-[#232c3d] focus:border-blue-500 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors"
+                      />
+                    </div>
+                  </>
+                )}
+
+                <div className="p-3.5 rounded-lg bg-[#111722] border border-[#1e2736] text-xs text-gray-400 space-y-1">
+                  <p className="font-semibold text-blue-400">How it works</p>
+                  <p>
+                    Streamer opens a persistent SSH connection to the bastion and dials every target address through it (SSH direct-tcpip). For Kafka, brokers discovered via cluster metadata are also reached through the tunnel, so private VPC endpoints work out of the box. The SSH host key is trusted on first connect.
+                  </p>
+                </div>
+              </>
             )}
           </div>
         )}
