@@ -518,12 +518,12 @@ export const ConnectionView: React.FC<ConnectionViewProps> = ({
                   onClick={() => {
                     updateField('protocol', 'rabbitmq');
                     if (!form.url || form.url.includes('4222') || form.url.includes('9092') || form.url.includes('4566')) {
-                      updateField('url', 'amqp://guest:guest@localhost:5672/');
+                      updateField('url', 'amqp://localhost:5672/');
                     }
                     if (!form.vhost) {
                       updateField('vhost', '/');
                     }
-                    if (form.authType !== 'none' && form.authType !== 'userpass') {
+                    if (form.protocol !== 'rabbitmq') {
                       updateField('authType', 'userpass');
                     }
                   }}
@@ -573,105 +573,45 @@ export const ConnectionView: React.FC<ConnectionViewProps> = ({
             </div>
             {isRabbitMQ ? (
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-gray-300">
-                      AMQP Connection URL
-                    </label>
-                    <input
-                      type="text"
-                      value={form.url || ''}
-                      onChange={(e) => updateField('url', e.target.value)}
-                      placeholder="amqp://guest:guest@localhost:5672/ or amqps://..."
-                      className="w-full bg-[#131923] border border-[#232c3d] focus:border-rose-500 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors"
-                    />
-                    <p className="text-[11px] text-gray-500">
-                      Primary wire protocol URL (default port 5672, or 5671 for TLS).
-                    </p>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label htmlFor="managementUrl" className="text-xs font-medium text-gray-300 flex items-center justify-between">
-                      <span>Management HTTP URL <span className="font-normal text-gray-500">(optional)</span></span>
-                      <span className="text-[10px] text-rose-400/80">{form.managementUrl?.trim() ? 'Custom' : 'Automatic'}</span>
-                    </label>
-                    <input
-                      id="managementUrl"
-                      type="text"
-                      value={form.managementUrl || ''}
-                      onChange={(e) => updateField('managementUrl', e.target.value)}
-                      placeholder="Automatic from AMQP host"
-                      className="w-full bg-[#131923] border border-[#232c3d] focus:border-rose-500 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors"
-                    />
-                    <p className="text-[11px] text-gray-500">
-                      Leave blank to use the AMQP host: Amazon MQ uses HTTPS/443; other brokers use HTTP/15672 or HTTPS/15671. Used to list queues, exchanges and metrics.
-                    </p>
-                    {form.managementUrl?.trim() && (
-                      <button
-                        type="button"
-                        onClick={() => updateField('managementUrl', '')}
-                        className="text-[11px] text-rose-300 hover:text-rose-200 underline underline-offset-2"
-                      >
-                        Use automatic URL
-                      </button>
-                    )}
-                  </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="amqpUrl" className="text-xs font-medium text-gray-300">
+                    AMQP Connection URL
+                  </label>
+                  <input
+                    id="amqpUrl"
+                    type="text"
+                    value={form.url || ''}
+                    onChange={(e) => updateField('url', e.target.value)}
+                    placeholder="amqps://broker.example.com:5671/"
+                    className="w-full bg-[#131923] border border-[#232c3d] focus:border-rose-500 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors"
+                  />
+                  <p className="text-[11px] text-gray-500">
+                    AMQPS uses TLS on port 5671; plaintext AMQP uses port 5672. Amazon MQ automatically uses AMQPS/5671. The Management API address is calculated automatically.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('auth')}
+                    className="text-[11px] text-rose-300 hover:text-rose-200 underline underline-offset-2"
+                  >
+                    Configure username and password in Authentication
+                  </button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-gray-300">
-                      Virtual Host (VHost)
-                    </label>
-                    <input
-                      type="text"
-                      value={form.vhost || '/'}
-                      onChange={(e) => updateField('vhost', e.target.value)}
-                      placeholder="/"
-                      className="w-full bg-[#131923] border border-[#232c3d] focus:border-rose-500 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors"
-                    />
-                    <p className="text-[11px] text-gray-500">
-                      Target virtual host namespace. Default is <code className="text-rose-300">/</code>.
-                    </p>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-gray-300">
-                      Local Development Presets
-                    </label>
-                    <div className="flex gap-2 pt-0.5">
-                      <button
-                        type="button"
-                        title="Set localhost:5672, vhost /, automatic management URL and guest / guest credentials"
-                        onClick={() => {
-                          updateField('url', 'amqp://localhost:5672/');
-                          updateField('managementUrl', '');
-                          updateField('vhost', '/');
-                          updateField('username', 'guest');
-                          updateField('password', 'guest');
-                          updateField('authType', 'userpass');
-                        }}
-                        className="px-2.5 py-1.5 text-[11px] font-medium bg-[#131923] hover:bg-[#1a2332] text-rose-300 border border-[#232c3d] hover:border-rose-500/30 rounded-lg transition-colors"
-                      >
-                        Local + guest / guest
-                      </button>
-                      <button
-                        type="button"
-                        title="Set localhost:5672, vhost / and automatic management URL; keep the Authentication fields"
-                        onClick={() => {
-                          updateField('url', 'amqp://localhost:5672/');
-                          updateField('managementUrl', '');
-                          updateField('vhost', '/');
-                        }}
-                        className="px-2.5 py-1.5 text-[11px] font-medium bg-[#131923] hover:bg-[#1a2332] text-amber-300 border border-[#232c3d] hover:border-amber-500/30 rounded-lg transition-colors"
-                      >
-                        Local endpoint only
-                      </button>
-                    </div>
-                    <p className="text-[11px] text-gray-500">
-                      Shortcuts for a local RabbitMQ server. They replace the URL with localhost:5672 and the vhost with /. The first also fills guest / guest credentials; they do not connect automatically.
-                    </p>
-                  </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="rabbitmqVhost" className="text-xs font-medium text-gray-300">
+                    Virtual Host (VHost)
+                  </label>
+                  <input
+                    id="rabbitmqVhost"
+                    type="text"
+                    value={form.vhost || '/'}
+                    onChange={(e) => updateField('vhost', e.target.value)}
+                    placeholder="/"
+                    className="w-full bg-[#131923] border border-[#232c3d] focus:border-rose-500 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors"
+                  />
+                  <p className="text-[11px] text-gray-500">
+                    Target virtual host namespace. Default is <code className="text-rose-300">/</code>.
+                  </p>
                 </div>
               </div>
             ) : isSQS ? (

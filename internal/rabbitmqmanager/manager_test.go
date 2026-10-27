@@ -1,9 +1,15 @@
 package rabbitmqmanager
 
 import (
+	"io"
+	"net"
+	"strings"
 	"testing"
+	"time"
 
 	"streamer/internal/storage"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func TestParseConnectionInfo(t *testing.T) {
@@ -40,14 +46,14 @@ func TestParseConnectionInfo(t *testing.T) {
 			expectedTLS: false,
 		},
 		{
-			name: "Explicit Management URL and VHost",
+			name: "Management URL is derived even when legacy override exists",
 			profile: storage.ConnectionProfile{
 				URL:           "amqp://myuser:mypass@10.0.0.5:5672",
 				ManagementURL: "http://10.0.0.5:18000/",
 				VHost:         "analytics",
 			},
 			expectedURL: "amqp://myuser:mypass@10.0.0.5:5672/analytics",
-			expectedMgt: "http://10.0.0.5:18000",
+			expectedMgt: "http://10.0.0.5:15672",
 			expectedVH:  "analytics",
 			expectedTLS: false,
 		},
@@ -78,20 +84,24 @@ func TestParseConnectionInfo(t *testing.T) {
 			profile: storage.ConnectionProfile{
 				URL:           "amqps://b-123.mq.sa-east-1.amazonaws.com/",
 				ManagementURL: "  ",
+				Username:      "clouduser",
+				Password:      "cloudpass",
 			},
-			expectedURL: "amqps://guest:guest@b-123.mq.sa-east-1.amazonaws.com:5671/",
+			expectedURL: "amqps://clouduser:cloudpass@b-123.mq.sa-east-1.amazonaws.com:5671/",
 			expectedMgt: "https://b-123.mq.sa-east-1.amazonaws.com",
 			expectedVH:  "/",
 			expectedTLS: true,
 		},
 		{
-			name: "Amazon MQ explicit management override takes priority",
+			name: "Amazon MQ ignores stale management overrides",
 			profile: storage.ConnectionProfile{
 				URL:           "amqps://b-123.mq.sa-east-1.amazonaws.com/",
 				ManagementURL: " https://management.internal:8443/rabbit/ ",
+				Username:      "clouduser",
+				Password:      "cloudpass",
 			},
-			expectedURL: "amqps://guest:guest@b-123.mq.sa-east-1.amazonaws.com:5671/",
-			expectedMgt: "https://management.internal:8443/rabbit",
+			expectedURL: "amqps://clouduser:cloudpass@b-123.mq.sa-east-1.amazonaws.com:5671/",
+			expectedMgt: "https://b-123.mq.sa-east-1.amazonaws.com",
 			expectedVH:  "/",
 			expectedTLS: true,
 		},
@@ -116,6 +126,106 @@ func TestParseConnectionInfo(t *testing.T) {
 				t.Errorf("expected isTLS %v, got %v", tt.expectedTLS, isTLS)
 			}
 		})
+	}
+}
+
+func TestAmazonMQNormalizesTLS(t *testing.T) {
+	const host = "b-123.mq.sa-east-1.amazonaws.com"
+	for _, endpoint := range []string{
+		"amqp://" + host + ":5671/", // The frame_max error reported in the UI.
+		"amqp://" + host + ":5672/",
+		"amqp://" + host,
+		"amqps://" + host + ":5672/",
+		host + ":5671/",
+		host,
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			p := storage.ConnectionProfile{URL: endpoint, Username: "clouduser", Password: "cloudpass"}
+			uri, management, _, _, _, isTLS, err := NewRabbitMQManager().parseConnectionInfo(&p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := amqp.ParseURI(uri)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !isTLS || parsed.Scheme != "amqps" || parsed.Port != 5671 || parsed.Host != host {
+				t.Fatal("expected an AMQPS connection to the original host on port 5671")
+			}
+			if management != "https://"+host {
+				t.Fatalf("unexpected management endpoint: %s", management)
+			}
+		})
+	}
+}
+
+func TestConnectionConfigurationErrors(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		profile storage.ConnectionProfile
+		message string
+	}{
+		{"Plaintext on TLS port", storage.ConnectionProfile{URL: "amqp://rabbit.internal:5671/"}, "change amqp:// to amqps://"},
+		{"Amazon MQ missing credentials", storage.ConnectionProfile{URL: "amqp://b-123.mq.sa-east-1.amazonaws.com:5671/"}, "Authentication > User / Password"},
+		{"Amazon MQ missing password", storage.ConnectionProfile{URL: "amqps://b-123.mq.sa-east-1.amazonaws.com/", Username: "alice"}, "Authentication > User / Password"},
+		{"Wrong scheme", storage.ConnectionProfile{URL: "https://rabbit.internal/"}, "amqp:// or amqps://"},
+		{"Missing host", storage.ConnectionProfile{URL: "amqps:///"}, "hostname is required"},
+		{"Malformed credential URL", storage.ConnectionProfile{URL: "amqp://alice:private-secret%zz@host/"}, "invalid RabbitMQ URL"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, _, _, _, _, err := NewRabbitMQManager().parseConnectionInfo(&tt.profile)
+			if err == nil || !strings.Contains(err.Error(), tt.message) {
+				t.Fatalf("expected actionable error containing %q, got %v", tt.message, err)
+			}
+			if strings.Contains(err.Error(), "private-secret") {
+				t.Fatal("configuration error exposed a password")
+			}
+		})
+	}
+}
+
+func TestAMQPCredentialsRoundTrip(t *testing.T) {
+	p := storage.ConnectionProfile{
+		URL:      "amqps://old:old@b-123.mq.sa-east-1.amazonaws.com/",
+		Username: "alice+test", Password: " a+b@c:/?#% ", VHost: "team/queues",
+	}
+	uri, _, _, user, pass, _, err := NewRabbitMQManager().parseConnectionInfo(&p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := amqp.ParseURI(uri)
+	if err != nil {
+		t.Fatal("the AMQP client could not parse the generated URI")
+	}
+	if parsed.Username != p.Username || parsed.Password != p.Password || parsed.Vhost != p.VHost || user != p.Username || pass != p.Password {
+		t.Fatal("credentials or vhost changed while constructing the connection URI")
+	}
+}
+
+func TestDialErrorOmitsCredentials(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+		header := make([]byte, 8)
+		_, _ = io.ReadFull(conn, header)
+		// Close before the AMQP handshake to exercise the UI's connection error.
+	}()
+	p := storage.ConnectionProfile{URL: "amqp://" + listener.Addr().String(), Username: "private-user", Password: "private-secret"}
+	_, _, _, _, _, _, err = NewRabbitMQManager().buildClients(&p, nil)
+	if err == nil || !strings.Contains(err.Error(), listener.Addr().String()) {
+		t.Fatalf("expected a connection error identifying the endpoint, got %v", err)
+	}
+	if strings.Contains(err.Error(), p.Username) || strings.Contains(err.Error(), p.Password) {
+		t.Fatal("connection error exposed credentials")
 	}
 }
 

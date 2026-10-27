@@ -134,7 +134,7 @@ func (m *RabbitMQManager) parseConnectionInfo(p *storage.ConnectionProfile) (amq
 	}
 
 	// Normalize scheme if missing
-	if !strings.HasPrefix(rawURL, "amqp://") && !strings.HasPrefix(rawURL, "amqps://") {
+	if !strings.Contains(rawURL, "://") {
 		if p.TLSCertFile != "" || p.TLSCAFile != "" {
 			rawURL = "amqps://" + rawURL
 		} else {
@@ -144,9 +144,29 @@ func (m *RabbitMQManager) parseConnectionInfo(p *storage.ConnectionProfile) (amq
 
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return "", "", "", "", "", false, fmt.Errorf("invalid RabbitMQ URL %q: %w", rawURL, err)
+		return "", "", "", "", "", false, fmt.Errorf("invalid RabbitMQ URL: check the hostname, port and URL encoding")
 	}
 
+	u.Scheme = strings.ToLower(u.Scheme)
+	if u.Scheme != "amqp" && u.Scheme != "amqps" {
+		return "", "", "", "", "", false, fmt.Errorf("RabbitMQ requires an amqp:// or amqps:// URL")
+	}
+	host := u.Hostname()
+	if host == "" {
+		return "", "", "", "", "", false, fmt.Errorf("RabbitMQ hostname is required")
+	}
+	port := u.Port()
+	amazonMQ := isAmazonMQHost(host)
+	if amazonMQ {
+		// Amazon MQ RabbitMQ only exposes AMQP over TLS. Normalize common
+		// plaintext defaults before dialing, including profiles saved previously.
+		u.Scheme = "amqps"
+		if port == "" || port == "5672" {
+			port = "5671"
+		}
+	} else if u.Scheme == "amqp" && port == "5671" {
+		return "", "", "", "", "", false, fmt.Errorf("port 5671 normally requires TLS: change amqp:// to amqps:// (plaintext AMQP normally uses port 5672)")
+	}
 	isTLS = u.Scheme == "amqps"
 
 	// Extract credentials from URL or explicit profile fields
@@ -158,7 +178,10 @@ func (m *RabbitMQManager) parseConnectionInfo(p *storage.ConnectionProfile) (amq
 		user = strings.TrimSpace(p.Username)
 	}
 	if p.Password != "" {
-		pass = strings.TrimSpace(p.Password)
+		pass = p.Password
+	}
+	if amazonMQ && (user == "" || pass == "") {
+		return "", "", "", "", "", false, fmt.Errorf("Amazon MQ requires a RabbitMQ username and password: configure Authentication > User / Password, or include credentials in the AMQP URL")
 	}
 	if user == "" {
 		user = "guest"
@@ -182,8 +205,6 @@ func (m *RabbitMQManager) parseConnectionInfo(p *storage.ConnectionProfile) (amq
 	}
 
 	// Reconstruct clean AMQP URI with user/pass
-	host := u.Hostname()
-	port := u.Port()
 	if port == "" {
 		if isTLS {
 			port = "5671"
@@ -192,16 +213,19 @@ func (m *RabbitMQManager) parseConnectionInfo(p *storage.ConnectionProfile) (amq
 		}
 	}
 
-	encodedVHost := url.PathEscape(vhost)
+	u.User = url.UserPassword(user, pass)
+	u.Host = net.JoinHostPort(host, port)
+	u.Path = "/" + vhost
+	u.RawPath = "/" + url.PathEscape(vhost)
 	if vhost == "/" {
-		encodedVHost = ""
+		u.Path = "/"
+		u.RawPath = ""
 	}
-	amqpURL = fmt.Sprintf("%s://%s:%s@%s:%s/%s", u.Scheme, url.QueryEscape(user), url.QueryEscape(pass), host, port, encodedVHost)
+	amqpURL = u.String()
 
-	// Determine Management HTTP URL
-	if strings.TrimSpace(p.ManagementURL) != "" {
-		mgtURL = strings.TrimRight(strings.TrimSpace(p.ManagementURL), "/")
-	} else if isAmazonMQHost(host) {
+	// Management is always derived from the current AMQP host. Legacy saved
+	// overrides must not silently route requests to a different broker.
+	if amazonMQ {
 		// Amazon MQ exposes the RabbitMQ Management API over HTTPS on 443,
 		// rather than the self-hosted plugin's default ports.
 		mgtURL = "https://" + host
@@ -269,9 +293,11 @@ func (m *RabbitMQManager) buildClients(p *storage.ConnectionProfile, tunnel *ssh
 	}
 
 	// Establish AMQP Connection
+	endpoint, _ := url.Parse(amqpURL) // Already validated by parseConnectionInfo.
+	endpoint.User = nil
 	conn, err := amqp.DialConfig(amqpURL, amqpCfg)
 	if err != nil {
-		return nil, nil, nil, "", "", "", fmt.Errorf("failed to dial AMQP endpoint (%s): %w", amqpURL, err)
+		return nil, nil, nil, "", "", "", fmt.Errorf("failed to dial AMQP endpoint (%s): %w", endpoint.String(), err)
 	}
 
 	// Setup Management HTTP Client
@@ -292,7 +318,7 @@ func (m *RabbitMQManager) buildClients(p *storage.ConnectionProfile, tunnel *ssh
 		mgtClient.SetTransport(httpTransport)
 	}
 
-	return conn, mgtClient, rawHTTPClient, amqpURL, mgtURL, vhost, nil
+	return conn, mgtClient, rawHTTPClient, endpoint.String(), mgtURL, vhost, nil
 }
 
 // TestConnection verifies connectivity, checks management API, and measures RTT latency
