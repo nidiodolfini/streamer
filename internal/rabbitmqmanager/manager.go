@@ -201,6 +201,10 @@ func (m *RabbitMQManager) parseConnectionInfo(p *storage.ConnectionProfile) (amq
 	// Determine Management HTTP URL
 	if strings.TrimSpace(p.ManagementURL) != "" {
 		mgtURL = strings.TrimRight(strings.TrimSpace(p.ManagementURL), "/")
+	} else if isAmazonMQHost(host) {
+		// Amazon MQ exposes the RabbitMQ Management API over HTTPS on 443,
+		// rather than the self-hosted plugin's default ports.
+		mgtURL = "https://" + host
 	} else {
 		// Auto-derive: default management port is 15672 (or 15671 for HTTPS)
 		mgtScheme := "http"
@@ -209,10 +213,22 @@ func (m *RabbitMQManager) parseConnectionInfo(p *storage.ConnectionProfile) (amq
 			mgtScheme = "https"
 			mgtPort = "15671"
 		}
-		mgtURL = fmt.Sprintf("%s://%s:%s", mgtScheme, host, mgtPort)
+		mgtURL = mgtScheme + "://" + net.JoinHostPort(host, mgtPort)
 	}
 
 	return amqpURL, mgtURL, vhost, user, pass, isTLS, nil
+}
+
+func isAmazonMQHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	for _, suffix := range []string{".amazonaws.com", ".amazonaws.com.cn"} {
+		if strings.HasSuffix(host, suffix) {
+			labels := strings.Split(strings.TrimSuffix(host, suffix), ".")
+			return len(labels) == 3 && strings.HasPrefix(labels[0], "b-") &&
+				len(labels[0]) > 2 && labels[1] == "mq" && labels[2] != ""
+		}
+	}
+	return false
 }
 
 // buildClients instantiates AMQP connection and RabbitMQ Management HTTP client

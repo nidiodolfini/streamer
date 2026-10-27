@@ -520,9 +520,6 @@ export const ConnectionView: React.FC<ConnectionViewProps> = ({
                     if (!form.url || form.url.includes('4222') || form.url.includes('9092') || form.url.includes('4566')) {
                       updateField('url', 'amqp://guest:guest@localhost:5672/');
                     }
-                    if (!form.managementUrl) {
-                      updateField('managementUrl', 'http://localhost:15672');
-                    }
                     if (!form.vhost) {
                       updateField('vhost', '/');
                     }
@@ -594,20 +591,30 @@ export const ConnectionView: React.FC<ConnectionViewProps> = ({
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-gray-300 flex items-center justify-between">
-                      <span>Management HTTP URL</span>
-                      <span className="text-[10px] text-rose-400/80">Plugin port 15672</span>
+                    <label htmlFor="managementUrl" className="text-xs font-medium text-gray-300 flex items-center justify-between">
+                      <span>Management HTTP URL <span className="font-normal text-gray-500">(optional)</span></span>
+                      <span className="text-[10px] text-rose-400/80">{form.managementUrl?.trim() ? 'Custom' : 'Automatic'}</span>
                     </label>
                     <input
+                      id="managementUrl"
                       type="text"
                       value={form.managementUrl || ''}
                       onChange={(e) => updateField('managementUrl', e.target.value)}
-                      placeholder="http://localhost:15672"
+                      placeholder="Automatic from AMQP host"
                       className="w-full bg-[#131923] border border-[#232c3d] focus:border-rose-500 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors"
                     />
                     <p className="text-[11px] text-gray-500">
-                      Required for cluster overview, node telemetry, and queue/exchange enumeration.
+                      Leave blank to use the AMQP host: Amazon MQ uses HTTPS/443; other brokers use HTTP/15672 or HTTPS/15671. Used to list queues, exchanges and metrics.
                     </p>
+                    {form.managementUrl?.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => updateField('managementUrl', '')}
+                        className="text-[11px] text-rose-300 hover:text-rose-200 underline underline-offset-2"
+                      >
+                        Use automatic URL
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -630,14 +637,15 @@ export const ConnectionView: React.FC<ConnectionViewProps> = ({
 
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-gray-300">
-                      Preset Quick Fill
+                      Local Development Presets
                     </label>
                     <div className="flex gap-2 pt-0.5">
                       <button
                         type="button"
+                        title="Set localhost:5672, vhost /, automatic management URL and guest / guest credentials"
                         onClick={() => {
-                          updateField('url', 'amqp://guest:guest@localhost:5672/');
-                          updateField('managementUrl', 'http://localhost:15672');
+                          updateField('url', 'amqp://localhost:5672/');
+                          updateField('managementUrl', '');
                           updateField('vhost', '/');
                           updateField('username', 'guest');
                           updateField('password', 'guest');
@@ -645,20 +653,24 @@ export const ConnectionView: React.FC<ConnectionViewProps> = ({
                         }}
                         className="px-2.5 py-1.5 text-[11px] font-medium bg-[#131923] hover:bg-[#1a2332] text-rose-300 border border-[#232c3d] hover:border-rose-500/30 rounded-lg transition-colors"
                       >
-                        Default Guest (guest:guest)
+                        Local + guest / guest
                       </button>
                       <button
                         type="button"
+                        title="Set localhost:5672, vhost / and automatic management URL; keep the Authentication fields"
                         onClick={() => {
                           updateField('url', 'amqp://localhost:5672/');
-                          updateField('managementUrl', 'http://localhost:15672');
+                          updateField('managementUrl', '');
                           updateField('vhost', '/');
                         }}
                         className="px-2.5 py-1.5 text-[11px] font-medium bg-[#131923] hover:bg-[#1a2332] text-amber-300 border border-[#232c3d] hover:border-amber-500/30 rounded-lg transition-colors"
                       >
-                        Local AMQP (Port 5672)
+                        Local endpoint only
                       </button>
                     </div>
+                    <p className="text-[11px] text-gray-500">
+                      Shortcuts for a local RabbitMQ server. They replace the URL with localhost:5672 and the vhost with /. The first also fills guest / guest credentials; they do not connect automatically.
+                    </p>
                   </div>
                 </div>
               </div>

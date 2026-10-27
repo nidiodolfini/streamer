@@ -52,14 +52,46 @@ func TestParseConnectionInfo(t *testing.T) {
 			expectedTLS: false,
 		},
 		{
-			name: "TLS AMQPS with custom port and auto-management HTTPS",
+			name: "Amazon MQ auto-management HTTPS on 443",
 			profile: storage.ConnectionProfile{
 				URL:      "amqps://b-123.mq.us-east-1.amazonaws.com:5671",
 				Username: "clouduser",
 				Password: "cloudpass",
 			},
 			expectedURL: "amqps://clouduser:cloudpass@b-123.mq.us-east-1.amazonaws.com:5671/",
-			expectedMgt: "https://b-123.mq.us-east-1.amazonaws.com:15671",
+			expectedMgt: "https://b-123.mq.us-east-1.amazonaws.com",
+			expectedVH:  "/",
+			expectedTLS: true,
+		},
+		{
+			name: "Self-hosted AMQPS retains plugin port",
+			profile: storage.ConnectionProfile{
+				URL: "amqps://rabbit.internal:5671/",
+			},
+			expectedURL: "amqps://guest:guest@rabbit.internal:5671/",
+			expectedMgt: "https://rabbit.internal:15671",
+			expectedVH:  "/",
+			expectedTLS: true,
+		},
+		{
+			name: "Amazon MQ with whitespace management URL uses automatic",
+			profile: storage.ConnectionProfile{
+				URL:           "amqps://b-123.mq.sa-east-1.amazonaws.com/",
+				ManagementURL: "  ",
+			},
+			expectedURL: "amqps://guest:guest@b-123.mq.sa-east-1.amazonaws.com:5671/",
+			expectedMgt: "https://b-123.mq.sa-east-1.amazonaws.com",
+			expectedVH:  "/",
+			expectedTLS: true,
+		},
+		{
+			name: "Amazon MQ explicit management override takes priority",
+			profile: storage.ConnectionProfile{
+				URL:           "amqps://b-123.mq.sa-east-1.amazonaws.com/",
+				ManagementURL: " https://management.internal:8443/rabbit/ ",
+			},
+			expectedURL: "amqps://guest:guest@b-123.mq.sa-east-1.amazonaws.com:5671/",
+			expectedMgt: "https://management.internal:8443/rabbit",
 			expectedVH:  "/",
 			expectedTLS: true,
 		},
@@ -84,6 +116,27 @@ func TestParseConnectionInfo(t *testing.T) {
 				t.Errorf("expected isTLS %v, got %v", tt.expectedTLS, isTLS)
 			}
 		})
+	}
+}
+
+func TestIsAmazonMQHost(t *testing.T) {
+	for _, host := range []string{
+		"b-123.mq.sa-east-1.amazonaws.com",
+		"b-123.mq.cn-north-1.amazonaws.com.cn",
+		"B-123.MQ.US-EAST-1.AMAZONAWS.COM.",
+	} {
+		if !isAmazonMQHost(host) {
+			t.Errorf("expected Amazon MQ endpoint: %s", host)
+		}
+	}
+	for _, host := range []string{
+		"localhost", "rabbit.internal", "10.0.0.5",
+		"b-123.mq.us-east-1.amazonaws.com.example.org",
+		"b-123.us-east-1.amazonaws.com", "b-123.ec2.us-east-1.amazonaws.com",
+	} {
+		if isAmazonMQHost(host) {
+			t.Errorf("unexpected Amazon MQ endpoint: %s", host)
+		}
 	}
 }
 
