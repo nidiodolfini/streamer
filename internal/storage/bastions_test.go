@@ -6,6 +6,37 @@ import (
 	"testing"
 )
 
+func TestConnectionsSortedByNameIgnoringCase(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "streamer.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Storage{db: db}
+	defer s.Close()
+	if err := s.initSchema(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"rabbitmq-medsoft", "MedRevisaoMQ_Prod", "MedRevisaoMQ_Homol"} {
+		if err := s.SaveConnection(ConnectionProfile{ID: name, Name: name, URL: "amqp://x/", AuthType: "userpass"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Saving/connecting updates updated_at; that must not reorder the list.
+	if err := s.SaveConnection(ConnectionProfile{ID: "MedRevisaoMQ_Homol", Name: "MedRevisaoMQ_Homol", URL: "amqp://x/", AuthType: "userpass"}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.GetAllConnections()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"MedRevisaoMQ_Homol", "MedRevisaoMQ_Prod", "rabbitmq-medsoft"}
+	for i, p := range list {
+		if p.Name != want[i] {
+			t.Fatalf("position %d: got %q, want %q", i, p.Name, want[i])
+		}
+	}
+}
+
 func TestBastionPersistenceAndProfileIsolation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "streamer.db")
 	db, err := sql.Open("sqlite", path)

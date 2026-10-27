@@ -171,7 +171,7 @@ func (s *Storage) GetAllConnections() ([]ConnectionProfile, error) {
 		       COALESCE(ssh_password, ''), COALESCE(ssh_key_file, ''), COALESCE(ssh_key_passphrase, ''),
 		       created_at, updated_at, last_connected_at
 		FROM connections
-		ORDER BY updated_at DESC
+		ORDER BY name COLLATE NOCASE, id
 	`)
 	if err != nil {
 		return nil, err

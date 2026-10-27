@@ -230,7 +230,7 @@ func TestSSHHandshakeTimeout(t *testing.T) {
 	}
 }
 
-func TestForwardTimeoutClosesPendingChannel(t *testing.T) {
+func TestForwardTimeoutKeepsSharedTransport(t *testing.T) {
 	peerClosed := make(chan struct{})
 	addr, stop := startSSHServer(t, "secret", func(socket net.Conn, config *ssh.ServerConfig) {
 		defer close(peerClosed)
@@ -256,10 +256,14 @@ func TestForwardTimeoutClosesPendingChannel(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected forwarding deadline, got %v", err)
 	}
+	// Other sessions share this SSH connection; one slow forward must not drop it.
 	select {
 	case <-peerClosed:
-	case <-time.After(time.Second):
-		t.Fatal("pending channel was not released by timeout")
+		t.Fatal("forwarding timeout closed the shared SSH transport")
+	case <-time.After(300 * time.Millisecond):
+	}
+	if _, _, err := tunnel.client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+		t.Fatalf("SSH transport unusable after forwarding timeout: %v", err)
 	}
 }
 

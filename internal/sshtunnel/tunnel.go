@@ -277,7 +277,6 @@ func probe(client *ssh.Client, socket net.Conn, timeout time.Duration) error {
 func (t *Tunnel) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
 	t.mu.Lock()
 	cl := t.client
-	socket := t.socket
 	t.mu.Unlock()
 	if cl == nil {
 		return nil, fmt.Errorf("SSH bastion tunnel is not connected")
@@ -288,16 +287,13 @@ func (t *Tunnel) Dial(ctx context.Context, network, addr string) (net.Conn, erro
 	}
 	ctx, cancel := context.WithTimeout(ctx, forwardTimeout)
 	defer cancel()
+	// A timed-out or canceled forward must not close the shared SSH transport:
+	// other connections (e.g. the AMQP session) are multiplexed over it.
 	conn, err := cl.DialContext(ctx, network, addr)
 	if err != nil {
-		if ctx.Err() != nil {
-			// DialContext leaves a goroutine waiting for channel-open confirmation.
-			// Close this failed SSH transport so it cannot accumulate pending dials.
-			_ = socket.Close()
-		}
 		return nil, fmt.Errorf("SSH bastion %s could not reach target %s (check routing, firewall and TCP forwarding): %w", t.addr, addr, err)
 	}
-	return conn, nil
+	return newDeadlineConn(conn), nil
 }
 
 func (t *Tunnel) isClosed() bool {
