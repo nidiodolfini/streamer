@@ -33,23 +33,38 @@ type Config struct {
 // Tunnel maintains a persistent SSH client connected to the bastion host and
 // dials outbound TCP connections through it using SSH direct-tcpip channels.
 type Tunnel struct {
-	cfg    Config
-	addr   string
-	mu     sync.Mutex
-	client *ssh.Client
-	stopCh chan struct{}
-	doneCh chan struct{}
+	cfg       Config
+	addr      string
+	mu        sync.Mutex
+	client    *ssh.Client
+	socket    net.Conn
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closeOnce sync.Once
+	stopCh    chan struct{}
+	doneCh    chan struct{}
 }
+
+const connectTimeout = 15 * time.Second
+const forwardTimeout = 10 * time.Second
 
 // New dials the bastion, authenticates, and starts a background keepalive
 // loop that transparently reconnects when the SSH link drops.
 func New(cfg Config) (*Tunnel, error) {
+	return NewContext(context.Background(), cfg)
+}
+
+// NewContext bounds TCP connection, SSH handshake and authentication together.
+func NewContext(ctx context.Context, cfg Config) (*Tunnel, error) {
 	host := strings.TrimSpace(cfg.Host)
 	if host == "" {
 		return nil, fmt.Errorf("SSH bastion host is required")
 	}
-	if cfg.Port <= 0 {
+	if cfg.Port == 0 {
 		cfg.Port = 22
+	}
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		return nil, fmt.Errorf("SSH port must be between 1 and 65535")
 	}
 	userName := strings.TrimSpace(cfg.User)
 	if userName == "" {
@@ -64,9 +79,12 @@ func New(cfg Config) (*Tunnel, error) {
 		return nil, err
 	}
 
+	tunnelCtx, cancel := context.WithCancel(ctx)
 	t := &Tunnel{
 		cfg:    cfg,
 		addr:   net.JoinHostPort(host, fmt.Sprintf("%d", cfg.Port)),
+		ctx:    tunnelCtx,
+		cancel: cancel,
 		stopCh: make(chan struct{}),
 		doneCh: make(chan struct{}),
 	}
@@ -74,11 +92,12 @@ func New(cfg Config) (*Tunnel, error) {
 	clientConfig := &ssh.ClientConfig{
 		User:            userName,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // first-connect trust; like many desktop DB GUIs
-		Timeout:         15 * time.Second,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         connectTimeout,
 	}
 
 	if err := t.connect(clientConfig); err != nil {
+		cancel()
 		return nil, err
 	}
 
@@ -89,7 +108,11 @@ func New(cfg Config) (*Tunnel, error) {
 // NewForProfile builds a Tunnel from the SSH fields of a connection profile.
 // The profile's SSHEnabled flag must be true.
 func NewForProfile(p *storage.ConnectionProfile) (*Tunnel, error) {
-	return New(Config{
+	return NewForProfileContext(context.Background(), p)
+}
+
+func NewForProfileContext(ctx context.Context, p *storage.ConnectionProfile) (*Tunnel, error) {
+	return NewContext(ctx, Config{
 		Host:          p.SSHHost,
 		Port:          p.SSHPort,
 		User:          p.SSHUser,
@@ -165,26 +188,40 @@ func buildAuthMethods(cfg Config) ([]ssh.AuthMethod, error) {
 
 // connect establishes (or re-establishes) the SSH client to the bastion.
 func (t *Tunnel) connect(clientConfig *ssh.ClientConfig) error {
-	conn, err := net.DialTimeout("tcp", t.addr, clientConfig.Timeout)
+	ctx, cancel := context.WithTimeout(t.ctx, clientConfig.Timeout)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", t.addr)
 	if err != nil {
 		return fmt.Errorf("failed to reach SSH bastion %s: %w", t.addr, err)
 	}
 
+	// ClientConfig.Timeout only covers TCP when using ssh.Dial. NewClientConn
+	// needs its own cancellation to bound version exchange and authentication.
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	c, chans, reqs, err := ssh.NewClientConn(conn, t.addr, clientConfig)
 	if err != nil {
 		_ = conn.Close()
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return fmt.Errorf("SSH handshake/authentication with bastion %s failed: %w", t.addr, err)
+	}
+	if !stop() || ctx.Err() != nil {
+		_ = conn.Close()
+		return fmt.Errorf("SSH connection to bastion %s timed out or was canceled", t.addr)
 	}
 	client := ssh.NewClient(c, chans, reqs)
 
 	t.mu.Lock()
-	if t.isClosed() {
+	if t.isClosed() || t.ctx.Err() != nil {
 		t.mu.Unlock()
 		_ = client.Close()
 		return fmt.Errorf("SSH tunnel already closed")
 	}
 	old := t.client
 	t.client = client
+	t.socket = conn
 	t.mu.Unlock()
 
 	if old != nil {
@@ -204,18 +241,35 @@ func (t *Tunnel) keepAlive(clientConfig *ssh.ClientConfig) {
 		select {
 		case <-t.stopCh:
 			return
+		case <-t.ctx.Done():
+			t.mu.Lock()
+			if t.socket != nil {
+				_ = t.socket.Close()
+			}
+			t.mu.Unlock()
+			return
 		case <-ticker.C:
 			t.mu.Lock()
 			cl := t.client
+			socket := t.socket
 			t.mu.Unlock()
 			if cl == nil {
 				continue
 			}
-			if _, _, err := cl.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+			if err := probe(cl, socket, 10*time.Second); err != nil {
 				_ = t.connect(clientConfig)
 			}
 		}
 	}
+}
+
+// Closing the underlying socket also releases a peer that never replies to a
+// keepalive (or stops reading); waiting for SendRequest alone has no timeout.
+func probe(client *ssh.Client, socket net.Conn, timeout time.Duration) error {
+	timer := time.AfterFunc(timeout, func() { _ = socket.Close() })
+	defer timer.Stop()
+	_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+	return err
 }
 
 // Dial opens a TCP connection to addr (host:port) through the SSH bastion.
@@ -223,22 +277,25 @@ func (t *Tunnel) keepAlive(clientConfig *ssh.ClientConfig) {
 func (t *Tunnel) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
 	t.mu.Lock()
 	cl := t.client
+	socket := t.socket
 	t.mu.Unlock()
 	if cl == nil {
 		return nil, fmt.Errorf("SSH bastion tunnel is not connected")
 	}
 
-	var (
-		conn net.Conn
-		err  error
-	)
-	if ctx != nil {
-		conn, err = cl.DialContext(ctx, network, addr)
-	} else {
-		conn, err = cl.Dial(network, addr)
+	if ctx == nil {
+		ctx = context.Background()
 	}
+	ctx, cancel := context.WithTimeout(ctx, forwardTimeout)
+	defer cancel()
+	conn, err := cl.DialContext(ctx, network, addr)
 	if err != nil {
-		return nil, fmt.Errorf("SSH tunnel dial %s failed: %w", addr, err)
+		if ctx.Err() != nil {
+			// DialContext leaves a goroutine waiting for channel-open confirmation.
+			// Close this failed SSH transport so it cannot accumulate pending dials.
+			_ = socket.Close()
+		}
+		return nil, fmt.Errorf("SSH bastion %s could not reach target %s (check routing, firewall and TCP forwarding): %w", t.addr, addr, err)
 	}
 	return conn, nil
 }
@@ -254,20 +311,19 @@ func (t *Tunnel) isClosed() bool {
 
 // Close terminates the keepalive loop and closes the SSH connection.
 func (t *Tunnel) Close() error {
-	t.mu.Lock()
-	cl := t.client
-	t.client = nil
-	t.mu.Unlock()
-
-	select {
-	case <-t.stopCh:
-	default:
+	t.closeOnce.Do(func() {
 		close(t.stopCh)
-	}
-	<-t.doneCh
-
-	if cl != nil {
-		return cl.Close()
-	}
+		t.cancel()
+		t.mu.Lock()
+		socket := t.socket
+		t.client = nil
+		t.socket = nil
+		t.mu.Unlock()
+		// Release any blocked keepalive before waiting for the loop to exit.
+		if socket != nil {
+			_ = socket.Close()
+		}
+		<-t.doneCh
+	})
 	return nil
 }

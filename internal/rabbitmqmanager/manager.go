@@ -257,6 +257,18 @@ func isAmazonMQHost(host string) bool {
 
 // buildClients instantiates AMQP connection and RabbitMQ Management HTTP client
 func (m *RabbitMQManager) buildClients(p *storage.ConnectionProfile, tunnel *sshtunnel.Tunnel) (*amqp.Connection, *rabbithole.Client, *http.Client, string, string, string, error) {
+	return m.buildClientsContext(context.Background(), p, tunnel)
+}
+
+func (m *RabbitMQManager) buildClientsContext(parent context.Context, p *storage.ConnectionProfile, tunnel *sshtunnel.Tunnel) (*amqp.Connection, *rabbithole.Client, *http.Client, string, string, string, error) {
+	ctx, cancel := context.WithTimeout(parent, 15*time.Second)
+	defer cancel()
+	var stopHandshake func() bool
+	defer func() {
+		if stopHandshake != nil {
+			stopHandshake()
+		}
+	}()
 	amqpURL, mgtURL, vhost, user, pass, isTLS, err := m.parseConnectionInfo(p)
 	if err != nil {
 		return nil, nil, nil, "", "", "", err
@@ -282,10 +294,25 @@ func (m *RabbitMQManager) buildClients(p *storage.ConnectionProfile, tunnel *ssh
 			"platform":        "Desktop",
 		},
 		Dial: func(network, addr string) (net.Conn, error) {
+			var socket net.Conn
+			var err error
 			if tunnel != nil {
-				return tunnel.Dial(context.Background(), network, addr)
+				socket, err = tunnel.Dial(ctx, network, addr)
+			} else {
+				socket, err = (&net.Dialer{Timeout: 8 * time.Second}).DialContext(ctx, network, addr)
 			}
-			return net.DialTimeout(network, addr, 8*time.Second)
+			if err != nil {
+				return nil, err
+			}
+			// SSH channel connections do not support SetDeadline. Close the
+			// transport on timeout to bound both TLS and AMQP handshakes.
+			stopHandshake = context.AfterFunc(ctx, func() {
+				if tunnel != nil {
+					_ = tunnel.Close()
+				}
+				_ = socket.Close()
+			})
+			return socket, nil
 		},
 	}
 	if isTLS || p.TLSInsecure || p.TLSCAFile != "" || p.TLSCertFile != "" {
@@ -296,13 +323,20 @@ func (m *RabbitMQManager) buildClients(p *storage.ConnectionProfile, tunnel *ssh
 	endpoint, _ := url.Parse(amqpURL) // Already validated by parseConnectionInfo.
 	endpoint.User = nil
 	conn, err := amqp.DialConfig(amqpURL, amqpCfg)
+	if ctx.Err() != nil {
+		err = fmt.Errorf("TLS/AMQP connection timed out or was canceled: %w", ctx.Err())
+	}
 	if err != nil {
+		if conn != nil {
+			_ = conn.CloseDeadline(time.Now())
+		}
 		return nil, nil, nil, "", "", "", fmt.Errorf("failed to dial AMQP endpoint (%s): %w", endpoint.String(), err)
 	}
 
 	// Setup Management HTTP Client
 	httpTransport := &http.Transport{
 		TLSClientConfig:       tlsCfg,
+		TLSHandshakeTimeout:   8 * time.Second,
 		ResponseHeaderTimeout: 8 * time.Second,
 	}
 	if tunnel != nil {
@@ -316,6 +350,7 @@ func (m *RabbitMQManager) buildClients(p *storage.ConnectionProfile, tunnel *ssh
 	mgtClient, err := rabbithole.NewClient(mgtURL, user, pass)
 	if err == nil && mgtClient != nil {
 		mgtClient.SetTransport(httpTransport)
+		mgtClient.SetTimeout(10 * time.Second)
 	}
 
 	return conn, mgtClient, rawHTTPClient, endpoint.String(), mgtURL, vhost, nil
@@ -323,21 +358,31 @@ func (m *RabbitMQManager) buildClients(p *storage.ConnectionProfile, tunnel *ssh
 
 // TestConnection verifies connectivity, checks management API, and measures RTT latency
 func (m *RabbitMQManager) TestConnection(p storage.ConnectionProfile) (*RMQClusterStatus, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
 	var tunnel *sshtunnel.Tunnel
 	if p.SSHEnabled {
 		var err error
-		tunnel, err = sshtunnel.NewForProfile(&p)
+		tunnel, err = sshtunnel.NewForProfileContext(ctx, &p)
 		if err != nil {
 			return nil, err
 		}
 		defer tunnel.Close()
 	}
 
-	conn, mgtCli, _, amqpURL, mgtURL, vhost, err := m.buildClients(&p, tunnel)
+	conn, mgtCli, rawHTTP, amqpURL, mgtURL, vhost, err := m.buildClientsContext(ctx, &p, tunnel)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer rawHTTP.CloseIdleConnections()
+	defer func() { _ = conn.CloseDeadline(time.Now().Add(time.Second)) }()
+	stop := context.AfterFunc(ctx, func() {
+		if tunnel != nil {
+			_ = tunnel.Close()
+		}
+		_ = conn.CloseDeadline(time.Now())
+	})
+	defer stop()
 
 	start := time.Now()
 	// Open a lightweight probe channel to measure AMQP RTT
@@ -384,6 +429,9 @@ func (m *RabbitMQManager) TestConnection(p storage.ConnectionProfile) (*RMQClust
 		}
 	}
 
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("RabbitMQ test timed out: %w", ctx.Err())
+	}
 	return status, nil
 }
 

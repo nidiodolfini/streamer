@@ -142,7 +142,7 @@ func (s *Storage) initSchema() error {
 	_, _ = s.db.Exec("ALTER TABLE connections ADD COLUMN ssh_key_file TEXT;")
 	_, _ = s.db.Exec("ALTER TABLE connections ADD COLUMN ssh_key_passphrase TEXT;")
 
-	return nil
+	return s.initBastionSchema()
 }
 
 func (s *Storage) GetSetting(key string, defaultValue string) string {

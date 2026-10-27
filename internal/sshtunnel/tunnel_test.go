@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -154,6 +155,10 @@ type sshServerAddr struct {
 }
 
 func startTestSSHServer(t *testing.T, password string) (sshServerAddr, func()) {
+	return startSSHServer(t, password, handleTestSSHConn)
+}
+
+func startSSHServer(t *testing.T, password string, handle func(net.Conn, *ssh.ServerConfig)) (sshServerAddr, func()) {
 	t.Helper()
 
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -186,12 +191,122 @@ func startTestSSHServer(t *testing.T, password string) (sshServerAddr, func()) {
 			if err != nil {
 				return
 			}
-			go handleTestSSHConn(conn, config)
+			go handle(conn, config)
 		}
 	}()
 
 	addr := listener.Addr().(*net.TCPAddr)
 	return sshServerAddr{host: "127.0.0.1", port: addr.Port}, func() { _ = listener.Close() }
+}
+
+func TestSSHHandshakeTimeout(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	peerClosed := make(chan struct{})
+	go func() {
+		defer close(peerClosed)
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+		_, _ = io.Copy(io.Discard, conn) // Accept TCP but never send an SSH banner.
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	_, err = NewContext(ctx, Config{Host: "127.0.0.1", Port: listener.Addr().(*net.TCPAddr).Port,
+		User: "tester", AuthMethod: "password", Password: "secret"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected handshake deadline, got %v", err)
+	}
+	select {
+	case <-peerClosed:
+	case <-time.After(time.Second):
+		t.Fatal("timeout did not close the TCP connection")
+	}
+}
+
+func TestForwardTimeoutClosesPendingChannel(t *testing.T) {
+	peerClosed := make(chan struct{})
+	addr, stop := startSSHServer(t, "secret", func(socket net.Conn, config *ssh.ServerConfig) {
+		defer close(peerClosed)
+		defer socket.Close()
+		server, channels, requests, err := ssh.NewServerConn(socket, config)
+		if err != nil {
+			return
+		}
+		defer server.Close()
+		go ssh.DiscardRequests(requests)
+		for range channels { // Never confirm the direct-tcpip channel.
+		}
+	})
+	defer stop()
+	tunnel, err := New(Config{Host: addr.host, Port: addr.port, User: "tester", AuthMethod: "password", Password: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tunnel.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	_, err = tunnel.Dial(ctx, "tcp", "broker.internal:5671")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected forwarding deadline, got %v", err)
+	}
+	select {
+	case <-peerClosed:
+	case <-time.After(time.Second):
+		t.Fatal("pending channel was not released by timeout")
+	}
+}
+
+func TestCloseUnblocksKeepAlive(t *testing.T) {
+	requestSeen := make(chan struct{})
+	addr, stop := startSSHServer(t, "secret", func(socket net.Conn, config *ssh.ServerConfig) {
+		defer socket.Close()
+		server, _, requests, err := ssh.NewServerConn(socket, config)
+		if err != nil {
+			return
+		}
+		defer server.Close()
+		for range requests {
+			close(requestSeen) // Do not reply to the keepalive.
+		}
+	})
+	defer stop()
+	socket, err := net.Dial("tcp", net.JoinHostPort(addr.host, fmt.Sprint(addr.port)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer socket.Close()
+	c, chans, reqs, err := ssh.NewClientConn(socket, "test-bastion", &ssh.ClientConfig{
+		User: "tester", Auth: []ssh.AuthMethod{ssh.Password("secret")}, HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	tunnel := &Tunnel{client: ssh.NewClient(c, chans, reqs), socket: socket, ctx: ctx, cancel: cancel,
+		stopCh: make(chan struct{}), doneCh: make(chan struct{})}
+	go func() {
+		defer close(tunnel.doneCh)
+		_ = probe(tunnel.client, socket, 10*time.Second)
+	}()
+	select {
+	case <-requestSeen:
+	case <-time.After(time.Second):
+		t.Fatal("keepalive did not reach server")
+	}
+	done := make(chan struct{})
+	go func() { _ = tunnel.Close(); _ = tunnel.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Close waited for a blocked keepalive before closing the socket")
+	}
 }
 
 func handleTestSSHConn(nConn net.Conn, config *ssh.ServerConfig) {

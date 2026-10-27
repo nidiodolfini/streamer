@@ -102,6 +102,10 @@ export function DeleteSQSQueue(arg1) {
   return window['go']['main']['App']['DeleteSQSQueue'](arg1);
 }
 
+export function DeleteSSHBastion(arg1) {
+  return window['go']['main']['App']['DeleteSSHBastion'](arg1);
+}
+
 export function DeleteStream(arg1) {
   return window['go']['main']['App']['DeleteStream'](arg1);
 }
@@ -200,6 +204,10 @@ export function GetSQSQueueDetails(arg1) {
 
 export function GetSQSStatus() {
   return window['go']['main']['App']['GetSQSStatus']();
+}
+
+export function GetSSHBastions() {
+  return window['go']['main']['App']['GetSSHBastions']();
 }
 
 export function GetSavedConnections() {
@@ -354,6 +362,10 @@ export function SaveConnection(arg1) {
   return window['go']['main']['App']['SaveConnection'](arg1);
 }
 
+export function SaveSSHBastion(arg1) {
+  return window['go']['main']['App']['SaveSSHBastion'](arg1);
+}
+
 export function SealObjectBucket(arg1) {
   return window['go']['main']['App']['SealObjectBucket'](arg1);
 }
@@ -408,6 +420,10 @@ export function Subscribe(arg1, arg2, arg3) {
 
 export function TestConnection(arg1) {
   return window['go']['main']['App']['TestConnection'](arg1);
+}
+
+export function TestSSHBastion(arg1) {
+  return window['go']['main']['App']['TestSSHBastion'](arg1);
 }
 
 export function Unsubscribe(arg1) {

@@ -1,15 +1,21 @@
 package rabbitmqmanager
 
 import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"errors"
 	"io"
 	"net"
 	"strings"
 	"testing"
 	"time"
 
+	"streamer/internal/sshtunnel"
 	"streamer/internal/storage"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"golang.org/x/crypto/ssh"
 )
 
 func TestParseConnectionInfo(t *testing.T) {
@@ -226,6 +232,72 @@ func TestDialErrorOmitsCredentials(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), p.Username) || strings.Contains(err.Error(), p.Password) {
 		t.Fatal("connection error exposed credentials")
+	}
+}
+
+func TestBrokerHandshakeTimeoutThroughSSH(t *testing.T) {
+	// A real SSH transport whose target accepts TCP but never replies to TLS or
+	// AMQP. SSH channel SetDeadline is unsupported: cancellation must close the
+	// underlying tunnel, not merely reset the UI's spinner.
+	for _, scheme := range []string{"amqp", "amqps"} {
+		t.Run(scheme, func(t *testing.T) {
+			_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			signer, err := ssh.NewSignerFromKey(privateKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			config := &ssh.ServerConfig{PasswordCallback: func(ssh.ConnMetadata, []byte) (*ssh.Permissions, error) { return nil, nil }}
+			config.AddHostKey(signer)
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			serverDone := make(chan struct{})
+			go func() {
+				defer close(serverDone)
+				socket, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				defer socket.Close()
+				server, channels, requests, err := ssh.NewServerConn(socket, config)
+				if err != nil {
+					return
+				}
+				defer server.Close()
+				go ssh.DiscardRequests(requests)
+				for incoming := range channels {
+					channel, requests, err := incoming.Accept()
+					if err != nil {
+						return
+					}
+					go ssh.DiscardRequests(requests)
+					go func() { _, _ = io.Copy(io.Discard, channel); _ = channel.Close() }()
+				}
+			}()
+			tunnel, err := sshtunnel.New(sshtunnel.Config{Host: "127.0.0.1", Port: listener.Addr().(*net.TCPAddr).Port,
+				User: "tester", AuthMethod: "password", Password: "secret"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tunnel.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+			defer cancel()
+			profile := storage.ConnectionProfile{URL: scheme + "://broker.internal/", SSHEnabled: true}
+			_, _, _, _, _, _, err = NewRabbitMQManager().buildClientsContext(ctx, &profile, tunnel)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("expected TLS/AMQP deadline through SSH, got %v", err)
+			}
+			select {
+			case <-serverDone:
+			case <-time.After(time.Second):
+				t.Fatal("timed-out broker handshake left the SSH transport open")
+			}
+		})
 	}
 }
 

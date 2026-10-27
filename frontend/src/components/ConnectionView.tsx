@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Play, 
   PowerOff, 
@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { storage, natsmanager } from '../../wailsjs/go/models';
 import { SelectFile } from '../../wailsjs/go/main/App';
+import { SSHBastionPresets } from './SSHBastionPresets';
 
 interface ConnectionViewProps {
   profile: storage.ConnectionProfile;
@@ -48,10 +49,14 @@ export const ConnectionView: React.FC<ConnectionViewProps> = ({
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const testGeneration = useRef(0);
 
   useEffect(() => {
     setForm(profile);
     setTestResult(null);
+    setTesting(false);
+    testGeneration.current++;
+    return () => { testGeneration.current++; };
   }, [profile.id]);
 
   const updateField = (field: keyof storage.ConnectionProfile, val: any) => {
@@ -73,21 +78,24 @@ export const ConnectionView: React.FC<ConnectionViewProps> = ({
   };
 
   const handleTest = async () => {
+    const generation = ++testGeneration.current;
     setTesting(true);
     setTestResult(null);
     try {
       const res = await onTest(form);
+      if (generation !== testGeneration.current) return;
       setTestResult({
         ok: true,
         msg: `Connected to ${res.serverVersion || (isSQS ? 'SQS (' + (form.awsRegion || 'us-east-1') + ')' : isRabbitMQ ? 'RabbitMQ' : 'NATS')} (RTT: ${res.rttMs.toFixed(1)}ms)`,
       });
     } catch (err: any) {
+      if (generation !== testGeneration.current) return;
       setTestResult({
         ok: false,
         msg: String(err),
       });
     } finally {
-      setTesting(false);
+      if (generation === testGeneration.current) setTesting(false);
     }
   };
 
@@ -1157,6 +1165,15 @@ export const ConnectionView: React.FC<ConnectionViewProps> = ({
 
             {form.sshEnabled && (
               <>
+                <SSHBastionPresets
+                  key={form.id}
+                  profile={form}
+                  onApply={(b) => setForm((prev) => storage.ConnectionProfile.createFrom({
+                    ...prev, sshEnabled: true, sshHost: b.host, sshPort: b.port,
+                    sshUser: b.user, sshAuthMethod: b.authMethod, sshPassword: b.password || '',
+                    sshKeyFile: b.keyFile || '', sshKeyPassphrase: b.keyPassphrase || '',
+                  }))}
+                />
                 <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-1.5 col-span-2">
                     <label className="text-xs font-medium text-gray-300">SSH Host</label>
@@ -1271,7 +1288,7 @@ export const ConnectionView: React.FC<ConnectionViewProps> = ({
                 <div className="p-3.5 rounded-lg bg-[#111722] border border-[#1e2736] text-xs text-gray-400 space-y-1">
                   <p className="font-semibold text-blue-400">How it works</p>
                   <p>
-                    Streamer opens a persistent SSH connection to the bastion and dials every target address through it (SSH direct-tcpip). For Kafka, brokers discovered via cluster metadata are also reached through the tunnel, so private VPC endpoints work out of the box. The SSH host key is trusted on first connect.
+                    Streamer opens an SSH connection to the bastion and dials target addresses through it (SSH direct-tcpip). Test SSH checks bastion authentication; Test Ping also checks the broker. SSH connection/authentication is limited to 15 seconds, and opening a target connection to 10 seconds. For Kafka, discovered brokers also use the tunnel.
                   </p>
                 </div>
               </>

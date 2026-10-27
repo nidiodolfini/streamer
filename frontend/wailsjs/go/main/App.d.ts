@@ -58,6 +58,8 @@ export function DeleteSQSMessage(arg1:string,arg2:string):Promise<void>;
 
 export function DeleteSQSQueue(arg1:string):Promise<void>;
 
+export function DeleteSSHBastion(arg1:string):Promise<void>;
+
 export function DeleteStream(arg1:string):Promise<void>;
 
 export function DeleteStreamMsg(arg1:string,arg2:number):Promise<void>;
@@ -107,6 +109,8 @@ export function GetRabbitMQStatus():Promise<rabbitmqmanager.RMQClusterStatus>;
 export function GetSQSQueueDetails(arg1:string):Promise<sqsmanager.SQSQueueDetail>;
 
 export function GetSQSStatus():Promise<sqsmanager.SQSClusterStatus>;
+
+export function GetSSHBastions():Promise<Array<storage.SSHBastion>>;
 
 export function GetSavedConnections():Promise<Array<storage.ConnectionProfile>>;
 
@@ -184,6 +188,8 @@ export function ResetKafkaConsumerGroupOffsets(arg1:kafkamanager.ResetOffsetsPar
 
 export function SaveConnection(arg1:storage.ConnectionProfile):Promise<void>;
 
+export function SaveSSHBastion(arg1:storage.SSHBastion):Promise<void>;
+
 export function SealObjectBucket(arg1:string):Promise<void>;
 
 export function SelectFile(arg1:string,arg2:string,arg3:string):Promise<string>;
@@ -211,6 +217,8 @@ export function StopSQSLivePoll():Promise<void>;
 export function Subscribe(arg1:string,arg2:string,arg3:string):Promise<natsmanager.SubscriptionInfo>;
 
 export function TestConnection(arg1:storage.ConnectionProfile):Promise<natsmanager.ServerStatus>;
+
+export function TestSSHBastion(arg1:storage.SSHBastion):Promise<number>;
 
 export function Unsubscribe(arg1:string):Promise<void>;
 

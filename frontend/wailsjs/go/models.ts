@@ -2345,6 +2345,34 @@ export namespace storage {
 		    return a;
 		}
 	}
+	export class SSHBastion {
+	    id: string;
+	    name: string;
+	    host: string;
+	    port: number;
+	    user: string;
+	    authMethod: string;
+	    password?: string;
+	    keyFile?: string;
+	    keyPassphrase?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHBastion(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.user = source["user"];
+	        this.authMethod = source["authMethod"];
+	        this.password = source["password"];
+	        this.keyFile = source["keyFile"];
+	        this.keyPassphrase = source["keyPassphrase"];
+	    }
+	}
 
 }
 
