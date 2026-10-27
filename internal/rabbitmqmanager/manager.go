@@ -245,7 +245,7 @@ func (m *RabbitMQManager) parseConnectionInfo(p *storage.ConnectionProfile) (amq
 
 func isAmazonMQHost(host string) bool {
 	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	for _, suffix := range []string{".amazonaws.com", ".amazonaws.com.cn"} {
+	for _, suffix := range []string{".amazonaws.com", ".amazonaws.com.cn", ".on.aws"} {
 		if strings.HasSuffix(host, suffix) {
 			labels := strings.Split(strings.TrimSuffix(host, suffix), ".")
 			return len(labels) == 3 && strings.HasPrefix(labels[0], "b-") &&

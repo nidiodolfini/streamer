@@ -306,6 +306,7 @@ func TestIsAmazonMQHost(t *testing.T) {
 		"b-123.mq.sa-east-1.amazonaws.com",
 		"b-123.mq.cn-north-1.amazonaws.com.cn",
 		"B-123.MQ.US-EAST-1.AMAZONAWS.COM.",
+		"b-8baeb198-8ba6-491a-9bff-1883ac7c4280.mq.us-east-1.on.aws",
 	} {
 		if !isAmazonMQHost(host) {
 			t.Errorf("expected Amazon MQ endpoint: %s", host)
