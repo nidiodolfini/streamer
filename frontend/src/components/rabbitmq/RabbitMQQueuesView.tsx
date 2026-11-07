@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Layers,
   Search,
@@ -33,6 +33,7 @@ import {
 } from '../../../wailsjs/go/main/App';
 import { CreateQueueModal } from './CreateQueueModal';
 import { QueueDetailDrawer } from './QueueDetailDrawer';
+import { ResizableTableHeader, measureTableColumn } from '../common/ResizableTableHeader';
 
 interface RabbitMQQueuesViewProps {
   isConnected: boolean;
@@ -43,6 +44,38 @@ interface RabbitMQQueuesViewProps {
 
 type QueueSortColumn = 'name' | 'type' | 'state' | 'messagesReady' | 'messagesUnacknowledged' | 'messages' | 'consumers' | 'memory' | 'hasDlx';
 type SortDirection = 'asc' | 'desc';
+type QueueColumn = QueueSortColumn | 'actions';
+type ColumnWidths = Record<QueueColumn, number>;
+
+const columnSizes: Record<QueueColumn, { width: number; minWidth: number }> = {
+  name: { width: 340, minWidth: 140 },
+  type: { width: 100, minWidth: 80 },
+  state: { width: 100, minWidth: 80 },
+  messagesReady: { width: 145, minWidth: 100 },
+  messagesUnacknowledged: { width: 110, minWidth: 80 },
+  messages: { width: 110, minWidth: 80 },
+  consumers: { width: 120, minWidth: 90 },
+  memory: { width: 110, minWidth: 80 },
+  hasDlx: { width: 85, minWidth: 65 },
+  actions: { width: 130, minWidth: 130 },
+};
+const maxColumnWidth = 4096;
+const columnWidthsKey = 'rabbitmq_queue_column_widths';
+
+function loadColumnWidths(): ColumnWidths {
+  let saved: Partial<ColumnWidths> = {};
+  try {
+    saved = JSON.parse(localStorage.getItem(columnWidthsKey) || '{}') || {};
+  } catch {
+    // Use defaults if local preferences are unavailable or invalid.
+  }
+  return Object.fromEntries(Object.entries(columnSizes).map(([key, size]) => {
+    const width = saved[key as QueueColumn];
+    return [key, typeof width === 'number' && Number.isFinite(width)
+      ? Math.round(Math.max(size.minWidth, Math.min(maxColumnWidth, width)))
+      : size.width];
+  })) as ColumnWidths;
+}
 
 const queueColumns: { key: QueueSortColumn; label: string; initialDirection: SortDirection }[] = [
   { key: 'name', label: 'Queue Name', initialDirection: 'asc' },
@@ -90,6 +123,25 @@ export const RabbitMQQueuesView: React.FC<RabbitMQQueuesViewProps> = ({
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'classic' | 'quorum' | 'stream' | 'dlx'>('all');
   const [sort, setSort] = useState<{ column: QueueSortColumn; direction: SortDirection }>({ column: 'name', direction: 'asc' });
+  const [columnWidths, setColumnWidths] = useState<ColumnWidths>(loadColumnWidths);
+  const tableRef = useRef<HTMLTableElement>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(columnWidthsKey, JSON.stringify(columnWidths));
+    } catch {
+      // Resizing still works when browser storage is unavailable.
+    }
+  }, [columnWidths]);
+
+  const resizeColumn = (column: QueueColumn, width: number) => {
+    const clamped = Math.round(Math.max(columnSizes[column].minWidth, Math.min(maxColumnWidth, width)));
+    setColumnWidths((prev) => prev[column] === clamped ? prev : { ...prev, [column]: clamped });
+  };
+
+  const autoFitColumn = (column: QueueColumn, index: number) => {
+    if (tableRef.current) resizeColumn(column, measureTableColumn(tableRef.current, index));
+  };
 
   // Modals & Drawers
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -246,7 +298,7 @@ export const RabbitMQQueuesView: React.FC<RabbitMQQueuesViewProps> = ({
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-[#090d13] select-none">
+    <div className="flex-1 flex flex-col min-h-0 min-w-0 bg-[#090d13] select-none">
       {/* Top Toolbar */}
       <div className="px-6 py-4 border-b border-[#1e2530] bg-[#0c1017] flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -419,30 +471,42 @@ export const RabbitMQQueuesView: React.FC<RabbitMQQueuesViewProps> = ({
       {/* Main Table */}
       <div className="flex-1 overflow-y-auto px-6 py-4">
         <div className="rounded-xl border border-[#1e2530] bg-[#0c1017] overflow-x-auto">
-          <table className="w-full min-w-[1000px] text-left text-xs border-collapse">
+          <table ref={tableRef} className="table-fixed text-left text-xs border-collapse"
+            style={{ width: Object.values(columnWidths).reduce((total, width) => total + width, 0) }}>
+            <colgroup>
+              {queueColumns.map((column) => <col key={column.key} style={{ width: columnWidths[column.key] }} />)}
+              <col style={{ width: columnWidths.actions }} />
+            </colgroup>
             <thead>
               <tr className="border-b border-[#1e2530] bg-[#101620] text-gray-400 text-[11px]">
-                {queueColumns.map((column) => {
+                {queueColumns.map((column, index) => {
                   const active = sort.column === column.key;
                   const nextDirection = active ? (sort.direction === 'asc' ? 'desc' : 'asc') : column.initialDirection;
                   const directionLabel = nextDirection === 'asc' ? 'ascending' : 'descending';
                   const SortIcon = active ? (sort.direction === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
                   return (
-                    <th key={column.key} scope="col"
-                      aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+                    <ResizableTableHeader key={column.key} label={column.label}
+                      width={columnWidths[column.key]} minWidth={columnSizes[column.key].minWidth} maxWidth={maxColumnWidth}
+                      onResize={(width) => resizeColumn(column.key, width)}
+                      onAutoFit={() => autoFitColumn(column.key, index)}
+                      sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
                       className={`font-medium ${column.key === 'name' ? 'px-4' : 'px-3'}`}>
                       <button type="button"
                         onClick={() => setSort({ column: column.key, direction: nextDirection })}
                         aria-label={`${column.label}: sort ${directionLabel}`}
                         title={`Sort ${column.label} ${directionLabel}`}
                         className={`flex w-full items-center gap-1.5 py-2.5 text-left hover:text-white transition-colors rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-400 ${active ? 'text-rose-300' : 'text-gray-400'}`}>
-                        <span>{column.label}</span>
+                        <span className="min-w-0 truncate">{column.label}</span>
                         <SortIcon className={`w-3 h-3 shrink-0 ${active ? '' : 'opacity-50'}`} aria-hidden="true" />
                       </button>
-                    </th>
+                    </ResizableTableHeader>
                   );
                 })}
-                <th scope="col" className="py-2.5 px-4 font-medium text-right">Actions</th>
+                <ResizableTableHeader label="Actions"
+                  width={columnWidths.actions} minWidth={columnSizes.actions.minWidth} maxWidth={maxColumnWidth}
+                  onResize={(width) => resizeColumn('actions', width)}
+                  onAutoFit={() => autoFitColumn('actions', queueColumns.length)}
+                  className="py-2.5 px-4 font-medium text-right">Actions</ResizableTableHeader>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#18202c]">
@@ -463,16 +527,16 @@ export const RabbitMQQueuesView: React.FC<RabbitMQQueuesViewProps> = ({
                 filteredQueues.map((q) => (
                   <tr
                     key={`${q.vhost}/${q.name}`}
-                    className="hover:bg-[#121822] transition-colors group cursor-pointer"
+                    className="hover:bg-[#121822] transition-colors group cursor-pointer [&>td]:overflow-hidden [&>td]:text-ellipsis [&>td]:whitespace-nowrap"
                     onClick={() => setSelectedDrawerQueue({ vhost: q.vhost, name: q.name })}
                   >
                     <td className="py-3 px-4 font-mono font-medium text-white">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate max-w-[220px]" title={q.name}>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 truncate" title={q.name}>
                           {q.name}
                         </span>
                         {q.vhost !== '/' && (
-                          <span className="text-[10px] text-gray-500 font-mono">({q.vhost})</span>
+                          <span className="shrink-0 text-[10px] text-gray-500 font-mono">({q.vhost})</span>
                         )}
                       </div>
                     </td>
