@@ -20,6 +20,9 @@ import {
   Database,
   Users,
   RotateCcw,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from 'lucide-react';
 import { rabbitmqmanager } from '../../../wailsjs/go/models';
 import {
@@ -36,6 +39,33 @@ interface RabbitMQQueuesViewProps {
   isActiveTab: boolean;
   onNavigateToMessages?: (queueName: string) => void;
   onOpenRedrive?: (queueName: string) => void;
+}
+
+type QueueSortColumn = 'name' | 'type' | 'state' | 'messagesReady' | 'messagesUnacknowledged' | 'messages' | 'consumers' | 'memory' | 'hasDlx';
+type SortDirection = 'asc' | 'desc';
+
+const queueColumns: { key: QueueSortColumn; label: string; initialDirection: SortDirection }[] = [
+  { key: 'name', label: 'Queue Name', initialDirection: 'asc' },
+  { key: 'type', label: 'Type', initialDirection: 'asc' },
+  { key: 'state', label: 'State', initialDirection: 'asc' },
+  { key: 'messagesReady', label: 'Messages Ready', initialDirection: 'desc' },
+  { key: 'messagesUnacknowledged', label: 'Unacked', initialDirection: 'desc' },
+  { key: 'messages', label: 'Total', initialDirection: 'desc' },
+  { key: 'consumers', label: 'Consumers', initialDirection: 'desc' },
+  { key: 'memory', label: 'Memory', initialDirection: 'desc' },
+  { key: 'hasDlx', label: 'DLX', initialDirection: 'desc' },
+];
+
+const queueCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+function queueSortValue(queue: rabbitmqmanager.RMQQueueSummary, column: QueueSortColumn): string | number {
+  switch (column) {
+    case 'name': return queue.name;
+    case 'type': return queue.type || 'classic';
+    case 'state': return queue.state || 'running';
+    case 'hasDlx': return Number(!!queue.hasDlx);
+    default: return queue[column] ?? 0;
+  }
 }
 
 function formatBytes(bytes: number): string {
@@ -59,6 +89,7 @@ export const RabbitMQQueuesView: React.FC<RabbitMQQueuesViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'classic' | 'quorum' | 'stream' | 'dlx'>('all');
+  const [sort, setSort] = useState<{ column: QueueSortColumn; direction: SortDirection }>({ column: 'name', direction: 'asc' });
 
   // Modals & Drawers
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -117,8 +148,20 @@ export const RabbitMQQueuesView: React.FC<RabbitMQQueuesViewProps> = ({
         q.name.toLowerCase().includes(term) ||
         (q.vhost && q.vhost.toLowerCase().includes(term))
       );
+    }).sort((a, b) => {
+      const aValue = queueSortValue(a, sort.column);
+      const bValue = queueSortValue(b, sort.column);
+      const comparison = typeof aValue === 'number' && typeof bValue === 'number'
+        ? aValue - bValue
+        : queueCollator.compare(String(aValue), String(bValue));
+
+      // Resolve equal metrics by name/vhost so refreshes do not shuffle rows.
+      return comparison * (sort.direction === 'asc' ? 1 : -1)
+        || queueCollator.compare(a.name, b.name)
+        || a.vhost.localeCompare(b.vhost)
+        || a.name.localeCompare(b.name);
     });
-  }, [queues, typeFilter, search]);
+  }, [queues, typeFilter, search, sort]);
 
   const stats = useMemo(() => {
     let totalMessages = 0;
@@ -375,20 +418,31 @@ export const RabbitMQQueuesView: React.FC<RabbitMQQueuesViewProps> = ({
 
       {/* Main Table */}
       <div className="flex-1 overflow-y-auto px-6 py-4">
-        <div className="rounded-xl border border-[#1e2530] bg-[#0c1017] overflow-hidden">
-          <table className="w-full text-left text-xs border-collapse">
+        <div className="rounded-xl border border-[#1e2530] bg-[#0c1017] overflow-x-auto">
+          <table className="w-full min-w-[1000px] text-left text-xs border-collapse">
             <thead>
               <tr className="border-b border-[#1e2530] bg-[#101620] text-gray-400 text-[11px]">
-                <th className="py-2.5 px-4 font-medium">Queue Name</th>
-                <th className="py-2.5 px-3 font-medium">Type</th>
-                <th className="py-2.5 px-3 font-medium">State</th>
-                <th className="py-2.5 px-3 font-medium">Messages Ready</th>
-                <th className="py-2.5 px-3 font-medium">Unacked</th>
-                <th className="py-2.5 px-3 font-medium">Total</th>
-                <th className="py-2.5 px-3 font-medium">Consumers</th>
-                <th className="py-2.5 px-3 font-medium">Memory</th>
-                <th className="py-2.5 px-3 font-medium">DLX</th>
-                <th className="py-2.5 px-4 font-medium text-right">Actions</th>
+                {queueColumns.map((column) => {
+                  const active = sort.column === column.key;
+                  const nextDirection = active ? (sort.direction === 'asc' ? 'desc' : 'asc') : column.initialDirection;
+                  const directionLabel = nextDirection === 'asc' ? 'ascending' : 'descending';
+                  const SortIcon = active ? (sort.direction === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
+                  return (
+                    <th key={column.key} scope="col"
+                      aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+                      className={`font-medium ${column.key === 'name' ? 'px-4' : 'px-3'}`}>
+                      <button type="button"
+                        onClick={() => setSort({ column: column.key, direction: nextDirection })}
+                        aria-label={`${column.label}: sort ${directionLabel}`}
+                        title={`Sort ${column.label} ${directionLabel}`}
+                        className={`flex w-full items-center gap-1.5 py-2.5 text-left hover:text-white transition-colors rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-400 ${active ? 'text-rose-300' : 'text-gray-400'}`}>
+                        <span>{column.label}</span>
+                        <SortIcon className={`w-3 h-3 shrink-0 ${active ? '' : 'opacity-50'}`} aria-hidden="true" />
+                      </button>
+                    </th>
+                  );
+                })}
+                <th scope="col" className="py-2.5 px-4 font-medium text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#18202c]">
