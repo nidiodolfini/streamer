@@ -103,7 +103,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleOpenRepo = () => {
-    BrowserOpenURL('https://github.com/07prajwal2000/streamer');
+    BrowserOpenURL('https://github.com/nidiodolfini/streamer');
   };
 
   const getClientConfigSnippet = () => {
@@ -490,7 +490,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span className="font-mono text-gray-300">SQLite (Pure Go / CGO-free)</span>
                 </div>
                 <div className="flex items-center justify-between text-xs pt-2 border-t border-[#1e2532]">
-                  <span className="text-gray-400">Author & Maintainer</span>
+                  <span className="text-gray-400">Maintainer</span>
+                  <span className="font-medium text-purple-400">@nidiodolfini</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-400">Original Author (MIT)</span>
                   <span className="font-medium text-purple-400">@07prajwal2000</span>
                 </div>
               </div>
@@ -498,7 +502,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div className="p-3.5 rounded-xl bg-gradient-to-r from-blue-900/20 to-purple-900/20 border border-blue-500/20 flex items-center justify-between">
                 <div>
                   <div className="text-xs font-semibold text-white">Support & Star on GitHub</div>
-                  <div className="text-[11px] text-gray-400 mt-0.5">github.com/07prajwal2000/streamer</div>
+                  <div className="text-[11px] text-gray-400 mt-0.5">github.com/nidiodolfini/streamer</div>
                 </div>
                 <button
                   type="button"

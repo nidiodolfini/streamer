@@ -55,7 +55,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const handleOpenRepo = (e: React.MouseEvent) => {
     e.preventDefault();
-    BrowserOpenURL('https://github.com/07prajwal2000/streamer');
+    BrowserOpenURL('https://github.com/nidiodolfini/streamer');
   };
 
   return (
@@ -454,8 +454,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Credits & Give Star on GitHub Link */}
       <div className="px-3 py-2 border-t border-[#18202c] bg-[#070b10] flex items-center justify-between text-[11px]">
-        <span className="text-gray-500 truncate">
-          by <span className="text-gray-300 font-medium">@07prajwal2000</span>
+        <span className="text-gray-500 truncate" title="Maintained by @nidiodolfini">
+          <span className="text-gray-300 font-medium">@nidiodolfini</span>
         </span>
         <button
           onClick={handleOpenRepo}

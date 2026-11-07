@@ -11,8 +11,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/07prajwal2000/streamer">
-    <img src="https://img.shields.io/github/stars/07prajwal2000/streamer?style=social" alt="GitHub stars" />
+  <a href="https://github.com/nidiodolfini/streamer">
+    <img src="https://img.shields.io/github/stars/nidiodolfini/streamer?style=social" alt="GitHub stars" />
   </a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue" alt="Platform support" />
   <img src="https://img.shields.io/badge/Pure%20Go-Zero%20CGO-00ADD8?logo=go" alt="Pure Go Zero CGO" />
@@ -30,6 +30,8 @@
 ![Streamer Screenshot](./screenshots/connection.png)
 
 ## 🌟 Overview
+
+This edition is maintained independently by **[@nidiodolfini](https://github.com/nidiodolfini)** at **[nidiodolfini/streamer](https://github.com/nidiodolfini/streamer)**. The `main` branch includes our SSH bastion support, reusable bastion settings, Amazon MQ connection fixes, and alphabetical connection profiles. Development, issues, and releases are managed in this repository.
 
 **Streamer** is an intuitive, fast, developer-centric desktop management application for modern distributed streaming platforms. Designed from the ground up for high throughput and zero native C-library headaches, Streamer provides first-class support for **Apache Kafka & Redpanda**, **NATS & JetStream**, **Amazon SQS**, and **RabbitMQ (AMQP 0-9-1)** in a single desktop application.
 
@@ -207,6 +209,12 @@ Streamer includes a built-in local MCP SSE Server (`http://127.0.0.1:<port>/sse`
   ```
 
 ### Development Mode
+Clone this repository and use its `main` branch:
+```bash
+git clone https://github.com/nidiodolfini/streamer.git
+cd streamer
+```
+
 Start the live development environment with hot reloading:
 ```bash
 wails dev
@@ -235,7 +243,7 @@ Due to Apple code-signing requirements, build Streamer locally on macOS:
 
 2. **Clone & Build**:
    ```bash
-   git clone https://github.com/07prajwal2000/streamer.git
+    git clone https://github.com/nidiodolfini/streamer.git
    cd streamer/frontend && npm install && cd ..
    ```
 
@@ -261,12 +269,14 @@ Due to Apple code-signing requirements, build Streamer locally on macOS:
 
 ---
 
-## 👤 Author & Credits
+## 👤 Maintainer & Credits
 
-Created by **[@07prajwal2000](https://github.com/07prajwal2000)**.
+This edition is maintained by **[@nidiodolfini](https://github.com/nidiodolfini)**.
+
+Originally created by **[@07prajwal2000](https://github.com/07prajwal2000)**. The original MIT license and copyright notice are retained in [LICENSE](LICENSE).
 
 If you find Streamer useful, please consider giving it a ⭐️ on GitHub:
-👉 [https://github.com/07prajwal2000/streamer](https://github.com/07prajwal2000/streamer)
+👉 [https://github.com/nidiodolfini/streamer](https://github.com/nidiodolfini/streamer)
 
 ---
 

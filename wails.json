@@ -7,7 +7,6 @@
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
   "author": {
-    "name": "Prajwal Aradhya",
-    "email": "manuaradhya07@gmail.com"
+    "name": "nidiodolfini"
   }
 }
