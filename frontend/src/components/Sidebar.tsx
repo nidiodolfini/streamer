@@ -219,6 +219,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <MessageSquare className="w-3.5 h-3.5 text-rose-400" />
               <span>Messages Studio</span>
             </button>
+            <button
+              onClick={() => onTabChange('rabbitmq-users')}
+              className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                activeTab === 'rabbitmq-users'
+                  ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-[#151b23]'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5 text-rose-400" />
+              <span>Users &amp; Permissions</span>
+            </button>
           </>
         ) : (
           <>

@@ -16,6 +16,7 @@ import { RabbitMQOverviewView } from './components/rabbitmq/RabbitMQOverviewView
 import { RabbitMQQueuesView } from './components/rabbitmq/RabbitMQQueuesView';
 import { RabbitMQExchangesView } from './components/rabbitmq/RabbitMQExchangesView';
 import { RabbitMQMessagesView } from './components/rabbitmq/RabbitMQMessagesView';
+import { RabbitMQUsersView } from './components/rabbitmq/RabbitMQUsersView';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { storage, natsmanager } from '../wailsjs/go/models';
 import {
@@ -327,6 +328,14 @@ export function App() {
             initialQueue={selectedRmqQueue}
             onClearInitialQueue={() => setSelectedRmqQueue(null)}
           />
+        </div>
+        <div className={`h-full w-full flex flex-col ${activeTab === 'rabbitmq-users' ? '' : 'hidden'}`}>
+          {activeStatus.connected && activeStatus.protocol === 'rabbitmq' && (
+            <RabbitMQUsersView
+              key={activeStatus.currentProfileId}
+              isActiveTab={activeTab === 'rabbitmq-users'}
+            />
+          )}
         </div>
       </main>
 

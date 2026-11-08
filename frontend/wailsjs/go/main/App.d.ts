@@ -26,6 +26,8 @@ export function CreateRabbitMQExchange(arg1:rabbitmqmanager.CreateExchangeParams
 
 export function CreateRabbitMQQueue(arg1:rabbitmqmanager.CreateQueueParams):Promise<rabbitmqmanager.RMQQueueSummary>;
 
+export function CreateRabbitMQUser(arg1:rabbitmqmanager.CreateUserParams):Promise<rabbitmqmanager.RMQUserInfo>;
+
 export function CreateSQSQueue(arg1:sqsmanager.CreateQueueParams):Promise<sqsmanager.SQSQueueSummary>;
 
 export function CreateStream(arg1:natsmanager.StreamCreateParams):Promise<void>;
@@ -142,6 +144,10 @@ export function ListRabbitMQNodes():Promise<Array<rabbitmqmanager.RMQNodeInfo>>;
 
 export function ListRabbitMQQueues(arg1:string):Promise<Array<rabbitmqmanager.RMQQueueSummary>>;
 
+export function ListRabbitMQUserPermissions(arg1:string):Promise<Array<rabbitmqmanager.RMQUserPermissions>>;
+
+export function ListRabbitMQUsers():Promise<Array<rabbitmqmanager.RMQUserInfo>>;
+
 export function ListRabbitMQVHosts():Promise<Array<rabbitmqmanager.RMQVHostInfo>>;
 
 export function ListSQSQueues(arg1:string):Promise<Array<sqsmanager.SQSQueueSummary>>;
@@ -195,6 +201,8 @@ export function SealObjectBucket(arg1:string):Promise<void>;
 export function SelectFile(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function SendSQSMessage(arg1:sqsmanager.SendSQSMessageParams):Promise<sqsmanager.SendSQSMessageResult>;
+
+export function SetRabbitMQUserPermissions(arg1:rabbitmqmanager.RMQUserPermissions):Promise<void>;
 
 export function SetSetting(arg1:string,arg2:string):Promise<void>;
 

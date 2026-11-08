@@ -783,6 +783,22 @@ func (a *App) ListRabbitMQVHosts() ([]rabbitmqmanager.RMQVHostInfo, error) {
 	return a.rmqManager.ListVHosts(a.ctx)
 }
 
+func (a *App) ListRabbitMQUsers() ([]rabbitmqmanager.RMQUserInfo, error) {
+	return a.rmqManager.ListUsers(a.ctx)
+}
+
+func (a *App) CreateRabbitMQUser(params rabbitmqmanager.CreateUserParams) (*rabbitmqmanager.RMQUserInfo, error) {
+	return a.rmqManager.CreateUser(a.ctx, params)
+}
+
+func (a *App) ListRabbitMQUserPermissions(username string) ([]rabbitmqmanager.RMQUserPermissions, error) {
+	return a.rmqManager.ListUserPermissions(a.ctx, username)
+}
+
+func (a *App) SetRabbitMQUserPermissions(params rabbitmqmanager.RMQUserPermissions) error {
+	return a.rmqManager.SetUserPermissions(a.ctx, params)
+}
+
 func (a *App) ListRabbitMQQueues(vhost string) ([]rabbitmqmanager.RMQQueueSummary, error) {
 	return a.rmqManager.ListQueues(a.ctx, vhost)
 }

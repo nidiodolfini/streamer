@@ -1202,6 +1202,22 @@ export namespace rabbitmqmanager {
 	        this.customArguments = source["customArguments"];
 	    }
 	}
+	export class CreateUserParams {
+	    name: string;
+	    password: string;
+	    tags: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new CreateUserParams(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.password = source["password"];
+	        this.tags = source["tags"];
+	    }
+	}
 	export class PeekRMQMessagesParams {
 	    vhost: string;
 	    queueName: string;
@@ -1795,6 +1811,40 @@ export namespace rabbitmqmanager {
 		    return a;
 		}
 	}
+	export class RMQUserInfo {
+	    name: string;
+	    tags: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new RMQUserInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.tags = source["tags"];
+	    }
+	}
+	export class RMQUserPermissions {
+	    user: string;
+	    vhost: string;
+	    configure: string;
+	    write: string;
+	    read: string;
+
+	    static createFrom(source: any = {}) {
+	        return new RMQUserPermissions(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.user = source["user"];
+	        this.vhost = source["vhost"];
+	        this.configure = source["configure"];
+	        this.write = source["write"];
+	        this.read = source["read"];
+	    }
+	}
 	export class RMQVHostInfo {
 	    name: string;
 	    messages: number;
@@ -2375,4 +2425,3 @@ export namespace storage {
 	}
 
 }
-

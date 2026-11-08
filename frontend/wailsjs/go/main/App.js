@@ -38,6 +38,10 @@ export function CreateRabbitMQQueue(arg1) {
   return window['go']['main']['App']['CreateRabbitMQQueue'](arg1);
 }
 
+export function CreateRabbitMQUser(arg1) {
+  return window['go']['main']['App']['CreateRabbitMQUser'](arg1);
+}
+
 export function CreateSQSQueue(arg1) {
   return window['go']['main']['App']['CreateSQSQueue'](arg1);
 }
@@ -270,6 +274,14 @@ export function ListRabbitMQQueues(arg1) {
   return window['go']['main']['App']['ListRabbitMQQueues'](arg1);
 }
 
+export function ListRabbitMQUserPermissions(arg1) {
+  return window['go']['main']['App']['ListRabbitMQUserPermissions'](arg1);
+}
+
+export function ListRabbitMQUsers() {
+  return window['go']['main']['App']['ListRabbitMQUsers']();
+}
+
 export function ListRabbitMQVHosts() {
   return window['go']['main']['App']['ListRabbitMQVHosts']();
 }
@@ -376,6 +388,10 @@ export function SelectFile(arg1, arg2, arg3) {
 
 export function SendSQSMessage(arg1) {
   return window['go']['main']['App']['SendSQSMessage'](arg1);
+}
+
+export function SetRabbitMQUserPermissions(arg1) {
+  return window['go']['main']['App']['SetRabbitMQUserPermissions'](arg1);
 }
 
 export function SetSetting(arg1, arg2) {

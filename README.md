@@ -162,6 +162,11 @@ It also features a built-in, local **Model Context Protocol (MCP) Server**, enab
 #### 4. Dead Letter Queue (DLQ) Redrive
 - **Automated DLX Routing**: Move dead-lettered messages back to source queues or designated retry exchanges with custom routing keys.
 
+#### 5. Users & Permissions
+- **Add a user**: Create users with password confirmation, custom tags, and Admin / Monitoring / Policymaker / Management / Impersonator / None shortcuts.
+- **Set permission**: Select a user and virtual host, inspect existing grants, and set Configure, Write, and Read regular expressions. Existing grants can be loaded for editing.
+- Uses the connection's Management API and SSH bastion transport. User administration requires a RabbitMQ administrator account.
+
 ---
 
 ### 🤖 Embedded Model Context Protocol (MCP) Server
